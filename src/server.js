@@ -189,6 +189,8 @@ app.get('/api/members', authenticate, async (req, res, next) => {
   } catch(err){next(err);}
 });
 
+// Frontend and API share one origin, so the secure session cookie works in browsers.
+app.use(express.static('public'));
 app.use((req,res)=>res.status(404).json({error:'Okänd adress.'}));
 app.use((err,req,res,next)=>{
   console.error('API error:', err);
