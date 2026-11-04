@@ -57,23 +57,31 @@ main,.sidebar,.card{min-width:0}
 </style>
 </head>
 <body>
-<header><div class="top"><div class="brand" aria-hidden="true">⚓</div><div><div class="name">Det händer i Stockevik</div><div class="tag">Vår egen mötesplats · utan annonser</div></div><div class="pill">stockevik.nu</div><div id="account" class="account hide"><span id="accountName" class="accountname"></span><button id="logoutBtn" class="btn subtle" type="button">Logga ut</button></div></div></header>
-<section id="loginView" class="loginwall"><div class="card"><div class="eyebrow">Inloggning · version 0.6</div><h2 style="font:28px Georgia,serif;margin:7px 0 12px">Välkommen tillbaka!</h2><p>Logga in med ditt testkonto.</p><form id="loginForm"><label for="loginMember">Medlem</label><select id="loginMember" required><option value="kalle@stockevik.test">Kalle</option><option value="olle@stockevik.test">Olle</option><option value="johan@stockevik.test">Johan</option></select><div class="field"><label for="loginPassword">Lösenord</label><input id="loginPassword" type="password" autocomplete="current-password" required></div><button class="btn" type="submit">Logga in</button><p class="small" id="loginError" role="alert"></p></form><div class="note">Testkonton med lösenord. Inlägg och kommentarer sparas på Stockeviks server och delas mellan inloggade medlemmar.</div></div></section>
+<header><div class="top"><div class="brand" aria-hidden="true">⚓</div><div><div class="name">Det händer i Stockevik</div><div class="tag">Vår egen mötesplats · utan annonser</div></div><div class="pill">Vår mötesplats</div><div id="account" class="account hide"><span id="accountName" class="accountname"></span><button id="logoutBtn" class="btn subtle" type="button">Logga ut</button></div></div></header>
+<section id="loginView" class="loginwall"><div class="card"><div class="eyebrow">Inloggning · version 0.7</div><h2 style="font:28px Georgia,serif;margin:7px 0 12px">Välkommen tillbaka!</h2><p>Logga in med din e-postadress och ditt lösenord.</p><form id="loginForm"><label for="loginEmail">E-postadress</label><input id="loginEmail" type="email" autocomplete="username" required placeholder="din@epost.se"><div class="field"><label for="loginPassword">Lösenord</label><input id="loginPassword" type="password" autocomplete="current-password" required></div><button class="btn" type="submit">Logga in</button><p class="small" id="loginError" role="alert"></p></form><button id="registerToggle" class="linkbtn" type="button">Ansök om medlemskap</button><div class="note">Inlägg och kommentarer delas mellan godkända medlemmar. Kontakta administratören om din ansökan väntar på godkännande.</div></div></section>
+<section id="registrationView" class="loginwall hide"><div class="card"><h2>Ansök om medlemskap</h2><p class="small">Endast boende som godkänns av administratören får tillgång till anslagstavlan. Ingen automatisk e-postbekräftelse skickas i denna testversion.</p><form id="registrationForm">
+<div class="field"><label for="regName">Namn</label><input id="regName" required maxlength="100" autocomplete="name"></div>
+<div class="field"><label for="regHouse">Fastighet / hus</label><input id="regHouse" required maxlength="100"></div>
+<div class="field"><label for="regEmail">E-postadress</label><input id="regEmail" type="email" required maxlength="180" autocomplete="email"></div>
+<div class="field"><label for="regPassword">Välj lösenord (minst 12 tecken)</label><input id="regPassword" type="password" required minlength="12" maxlength="200" autocomplete="new-password"></div>
+<button class="btn" type="submit">Skicka ansökan</button><p id="registrationStatus" role="status" class="small"></p></form>
+<button id="registrationBack" class="linkbtn" type="button">Tillbaka till inloggning</button></div></section>
 <div class="wrap hide" id="appWrap">
  <main>
   <section class="card"><div class="eyebrow">Vår gemensamma anslagstavla</div><div class="welcome">Välkommen till vår mötesplats!</div><div class="small">Nyheter, bilder och samtal mellan grannar – utan annonser.</div></section>
-  <nav class="tabbar" aria-label="Sidor"><button id="feedTab" class="active">Anslagstavlan</button><button id="membersTab">Medlemmar</button></nav>
+  <nav class="tabbar" aria-label="Sidor"><button id="feedTab" class="active">Anslagstavlan</button><button id="membersTab">Medlemmar</button><button id="adminTab" class="hide">Ansökningar</button></nav>
   <div id="feedView">
    <section class="card"><h2>Skriv ett inlägg</h2><textarea id="postText" maxlength="5000" placeholder="Vad vill du dela med grannarna?"></textarea><div class="actions"><span class="small">📷 Bilder kommer senare</span><button class="btn" id="postBtn">Publicera</button></div></section>
    <div class="small" id="feedStatus" role="status"></div><div id="posts" aria-live="polite"></div>
   </div>
+  <div id="adminView" class="hide"><section class="card"><h2>Medlemsansökningar</h2><p class="small">Godkänn bara personer som du känner tillhör Stockevik. E-postadresserna visas enbart för administratören.</p><div id="applicationsList"></div><p id="adminStatus" role="status" class="small"></p></section></div>
   <div id="membersView" class="hide">
    <section class="card"><h2>Medlemmar</h2><p class="small">Bara namn, hus och användarnamn visas för inloggade medlemmar.</p><div style="overflow-x:auto"><table class="members-table"><thead><tr><th>Namn</th><th>Hus</th><th>Användarnamn</th><th>Status</th></tr></thead><tbody id="membersList"></tbody></table></div></section>
   </div>
  </main>
  <aside class="sidebar"><section class="card"><h3>Om vår mötesplats</h3><p class="info">Ett privat samtalsforum för oss i Stockevik.</p><p class="info">Här kan vi dela nyheter, tips, frågor och små händelser från vår by.</p></section><section class="card"><h3>Bilder från Stockevik</h3><div class="boxpic">📷<br>Här kommer våra bilder</div><p class="notice">Bildgalleri tillkommer i nästa version.</p></section><section class="card"><h3>Enkelhet och integritet</h3><p class="info">Ingen reklam och ingen profilering. Medlemsuppgifter ska förvaltas av föreningen.</p></section></aside>
 </div>
-<footer>Det händer i Stockevik · Version 0.6 · gemensam anslagstavla</footer>
+<footer>Det händer i Stockevik · Version 0.7 · medlemsansökningar</footer>
 <script>
 'use strict';
 // Version 0.6. The web page is served by the Stockevik backend on the SAME origin.
@@ -123,18 +131,22 @@ function showSession() {
   $('appWrap').classList.toggle('hide', !signedIn);
   $('account').classList.toggle('hide', !signedIn);
   $('accountName').textContent = signedIn ? 'Inloggad som ' + currentMember.name : '';
+  $('adminTab').classList.toggle('hide', !signedIn || currentMember.role !== 'admin');
+  if (signedIn) $('registrationView').classList.add('hide');
 }
 function view(tab) {
-  const m = tab === 'members';
-  $('feedView').classList.toggle('hide', m);
-  $('membersView').classList.toggle('hide', !m);
-  $('feedTab').classList.toggle('active', !m);
-  $('membersTab').classList.toggle('active', m);
-  if (m) loadMembers();
-  else loadPosts();
+  if (tab === 'admin' && currentMember?.role !== 'admin') tab='feed';
+  for (const t of ['feed','members','admin']) {
+    $(t+'View').classList.toggle('hide',t!==tab);
+    $(t+'Tab').classList.toggle('active',t===tab);
+  }
+  if (tab === 'members') loadMembers();
+  if (tab === 'feed') loadPosts();
+  if (tab === 'admin') loadApplications();
 }
 $('feedTab').onclick = () => view('feed');
 $('membersTab').onclick = () => view('members');
+$('adminTab').onclick = () => view('admin');
 
 function renderPosts() {
   const host = $('posts'); host.replaceChildren();
@@ -209,6 +221,62 @@ async function loadMembers() {
     }
   } catch(e) { host.replaceChildren(element('tr','',e.message)); }
 }
+
+$('registerToggle').onclick=()=>{
+  $('loginView').classList.add('hide');
+  $('registrationView').classList.remove('hide');
+};
+$('registrationBack').onclick=()=>{
+  $('registrationView').classList.add('hide');
+  $('loginView').classList.remove('hide');
+};
+$('registrationForm').onsubmit=async e=>{
+  e.preventDefault();
+  const form=$('registrationForm');
+  const button=form.querySelector('button[type=submit]');
+  const status=$('registrationStatus');
+  status.textContent='Skickar ansökan …'; button.disabled=true;
+  try {
+    const result=await api('/register','POST',{
+      name:$('regName').value, house:$('regHouse').value,
+      email:$('regEmail').value, password:$('regPassword').value
+    });
+    status.textContent=result.message;
+    form.reset();
+  } catch(err) { status.textContent=err.message; }
+  finally { button.disabled=false; }
+};
+async function loadApplications() {
+  const host=$('applicationsList');
+  host.replaceChildren();
+  $('adminStatus').textContent='Hämtar ansökningar …';
+  try {
+    const result=await api('/admin/applications');
+    const applications=result.applications||[];
+    $('adminStatus').textContent=applications.length ? '' : 'Inga väntande ansökningar.';
+    for(const a of applications) {
+      const card=element('div','comment');
+      card.append(element('b','',a.name+' · '+a.house));
+      card.append(element('p','',a.email));
+      const actions=element('div','actions');
+      for(const [decision,label] of [['approve','Godkänn'],['reject','Avslå']]) {
+        const button=element('button',decision==='approve'?'btn':'btn subtle',label);
+        button.type='button';
+        button.onclick=async()=>{
+          if(!confirm(`${label} ansökan från ${a.name}?`))return;
+          button.disabled=true;
+          try {
+            await api('/admin/applications/'+a.id+'/decision','POST',{decision});
+            await loadApplications();
+          } catch(err) { alert(err.message); button.disabled=false; }
+        };
+        actions.append(button);
+      }
+      card.append(actions); host.append(card);
+    }
+  } catch(err) { $('adminStatus').textContent=err.message; }
+}
+
 $('loginForm').onsubmit = async event => {
   event.preventDefault();
   const button = $('loginForm').querySelector('button[type="submit"]');
@@ -216,7 +284,7 @@ $('loginForm').onsubmit = async event => {
   button.disabled = true;
   try {
     const result = await api('/login','POST',{
-      email: $('loginMember').value,
+      email: $('loginEmail').value.trim(),
       password: $('loginPassword').value
     });
     currentMember = result.member;

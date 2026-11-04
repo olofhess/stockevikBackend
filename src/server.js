@@ -48,6 +48,8 @@ const loginLimiter = rateLimit({windowMs: 15 * 60 * 1000, limit: 8, standardHead
 const writeLimiter = rateLimit({windowMs: 60 * 1000, limit: 25, standardHeaders: 'draft-7', legacyHeaders: false});
 const hashToken = token => createHash('sha256').update(token).digest('hex');
 const publicMember = m => ({id: m.id, name: m.name, house: m.house, username: m.username});
+const selfMember = m => ({...publicMember(m), role: m.role});
+const registrationLimiter = rateLimit({windowMs:15*60*1000,limit:5,standardHeaders:'draft-7',legacyHeaders:false});
 const safeText = (t, max) => typeof t === 'string' && t.trim().length > 0 && t.trim().length <= max ? t.trim() : null;
 
 async function initialize() {
@@ -86,6 +88,9 @@ async function initialize() {
   );
   CREATE INDEX IF NOT EXISTS comments_post ON comments(post_id, created_at);
   `);
+  // Safe migration from v0.6. Existing members, posts and comments are retained.
+  await pool.query(`ALTER TABLE members DROP CONSTRAINT IF EXISTS members_status_check;
+    ALTER TABLE members ADD CONSTRAINT members_status_check CHECK (status IN ('active','inactive','pending'));`);
 }
 
 async function seedOnlyForDemo() {
@@ -119,7 +124,7 @@ async function authenticate(req, res, next) {
 }
 
 app.get('/api/health', async (_req, res, next) => {
-  try {await pool.query('SELECT 1'); res.json({ok:true, app:'Det händer i Stockevik', version:'backend-0.1'});}
+  try {await pool.query('SELECT 1'); res.json({ok:true, app:'Det händer i Stockevik', version:'backend-0.7'});}
   catch(err){next(err);}
 });
 
@@ -135,7 +140,7 @@ app.post('/api/login', loginLimiter, async (req, res, next) => {
     const token = randomBytes(32).toString('hex');
     await pool.query('INSERT INTO sessions(token_hash,member_id,expires_at) VALUES ($1,$2,now() + interval \'7 days\')',[hashToken(token), rows[0].id]);
     res.cookie(cookieName, token, {httpOnly:true, secure:production, sameSite:'lax', maxAge:sessionHours*3600*1000, path:'/'});
-    res.json({member:publicMember(rows[0])});
+    res.json({member:selfMember(rows[0])});
   } catch(err){next(err);}
 });
 
@@ -148,7 +153,7 @@ app.post('/api/logout', async (req, res, next) => {
   } catch(err){next(err);}
 });
 
-app.get('/api/me', authenticate, (req, res) => res.json({member:publicMember(req.member)}));
+app.get('/api/me', authenticate, (req, res) => res.json({member:selfMember(req.member)}));
 
 app.get('/api/posts', authenticate, async (_req, res, next) => {
   try {
@@ -189,6 +194,50 @@ app.get('/api/members', authenticate, async (req, res, next) => {
   } catch(err){next(err);}
 });
 
+
+// Requests are public; approval is always a separate administrator action.
+app.post('/api/register', registrationLimiter, async (req,res,next) => {
+  try {
+    const name = safeText(req.body?.name,100);
+    const house = safeText(req.body?.house,100);
+    const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    if (!name || !house || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 180 || password.length < 12 || password.length > 200) {
+      return res.status(400).json({error:'Ange namn, fastighet, giltig e-post och lösenord med minst 12 tecken.'});
+    }
+    // A server-generated internal username is never used as a credential.
+    const username = 'medlem_' + randomBytes(12).toString('hex');
+    const hash = await bcrypt.hash(password,12);
+    await pool.query(`INSERT INTO members(name,house,username,email,password_hash,status,role)
+      VALUES($1,$2,$3,$4,$5,'pending','member') ON CONFLICT(email) DO NOTHING`,
+      [name,house,username,email,hash]);
+    res.status(202).json({message:'Din ansökan är mottagen. Du kan logga in när en administratör har godkänt den.'});
+  } catch(err){next(err);}
+});
+
+function requireAdmin(req,res,next) {
+  if (req.member.role !== 'admin') return res.status(403).json({error:'Endast administratören har tillgång.'});
+  next();
+}
+app.get('/api/admin/applications', authenticate, requireAdmin, async (_req,res,next) => {
+  try {
+    const {rows} = await pool.query(`SELECT id,name,house,email,joined_at FROM members
+       WHERE status='pending' ORDER BY joined_at ASC,id ASC`);
+    res.json({applications:rows});
+  } catch(err){next(err);}
+});
+app.post('/api/admin/applications/:id/decision', authenticate, requireAdmin, writeLimiter, async (req,res,next) => {
+  try {
+    if (!/^\d+$/.test(req.params.id) || !['approve','reject'].includes(req.body?.decision))
+      return res.status(400).json({error:'Ogiltigt beslut.'});
+    const status = req.body.decision === 'approve' ? 'active' : 'inactive';
+    const {rows} = await pool.query(`UPDATE members SET status=$2 WHERE id=$1 AND status='pending'
+      RETURNING id`, [req.params.id,status]);
+    if (!rows.length) return res.status(404).json({error:'Ansökan hittades inte eller är redan behandlad.'});
+    res.json({ok:true});
+  } catch(err){next(err);}
+});
+
 // Frontend and API share one origin, so the secure session cookie works in browsers.
 app.use(express.static('public'));
 app.use((req,res)=>res.status(404).json({error:'Okänd adress.'}));
@@ -200,6 +249,12 @@ app.use((err,req,res,next)=>{
 try {
   await initialize();
   await seedOnlyForDemo();
+  // Explicit administrator assignment: set ADMIN_EMAIL to an existing account in Render.
+  const adminEmail = (process.env.ADMIN_EMAIL || '').trim().toLowerCase();
+  if (adminEmail) {
+    const result = await pool.query(`UPDATE members SET role='admin' WHERE email=$1 AND status='active' RETURNING id`,[adminEmail]);
+    if (!result.rowCount) console.warn('ADMIN_EMAIL does not match an active member.');
+  }
   const port=Number(process.env.PORT || 10000);
   app.listen(port,'0.0.0.0',()=>console.log(`Stockevik backend listening on ${port}`));
 } catch(err){console.error('Startup failed:',err);process.exit(1);}
