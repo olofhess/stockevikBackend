@@ -58,7 +58,7 @@ main,.sidebar,.card{min-width:0}
 </head>
 <body>
 <header><div class="top"><div class="brand" aria-hidden="true">⚓</div><div><div class="name">Det händer i Stockevik</div><div class="tag">Vår egen mötesplats · utan annonser</div></div><div class="pill">Vår mötesplats</div><div id="account" class="account hide"><span id="accountName" class="accountname"></span><button id="logoutBtn" class="btn subtle" type="button">Logga ut</button></div></div></header>
-<section id="loginView" class="loginwall"><div class="card"><div class="eyebrow">Inloggning · version 0.7</div><h2 style="font:28px Georgia,serif;margin:7px 0 12px">Välkommen tillbaka!</h2><p>Logga in med din e-postadress och ditt lösenord.</p><form id="loginForm"><label for="loginEmail">E-postadress</label><input id="loginEmail" type="email" autocomplete="username" required placeholder="din@epost.se"><div class="field"><label for="loginPassword">Lösenord</label><input id="loginPassword" type="password" autocomplete="current-password" required></div><button class="btn" type="submit">Logga in</button><p class="small" id="loginError" role="alert"></p></form><button id="registerToggle" class="linkbtn" type="button">Ansök om medlemskap</button><div class="note">Inlägg och kommentarer delas mellan godkända medlemmar. Kontakta administratören om din ansökan väntar på godkännande.</div></div></section>
+<section id="loginView" class="loginwall"><div class="card"><div class="eyebrow">Inloggning · version 0.7.1</div><h2 style="font:28px Georgia,serif;margin:7px 0 12px">Välkommen tillbaka!</h2><p>Logga in med din e-postadress och ditt lösenord.</p><form id="loginForm"><label for="loginEmail">E-postadress</label><input id="loginEmail" type="email" autocomplete="username" required placeholder="din@epost.se"><div class="field"><label for="loginPassword">Lösenord</label><input id="loginPassword" type="password" autocomplete="current-password" required></div><button class="btn" type="submit">Logga in</button><p class="small" id="loginError" role="alert"></p></form><button id="registerToggle" class="linkbtn" type="button">Ansök om medlemskap</button><div class="note">Inlägg och kommentarer delas mellan godkända medlemmar. Kontakta administratören om din ansökan väntar på godkännande.</div></div></section>
 <section id="registrationView" class="loginwall hide"><div class="card"><h2>Ansök om medlemskap</h2><p class="small">Endast boende som godkänns av administratören får tillgång till anslagstavlan. Ingen automatisk e-postbekräftelse skickas i denna testversion.</p><form id="registrationForm">
 <div class="field"><label for="regName">Namn</label><input id="regName" required maxlength="100" autocomplete="name"></div>
 <div class="field"><label for="regHouse">Fastighet / hus</label><input id="regHouse" required maxlength="100"></div>
@@ -117,10 +117,7 @@ async function api(path, method='GET', data) {
   let result = {};
   try { result = await response.json(); } catch {}
   if (!response.ok) {
-    if (response.status === 401 && path !== '/login') {
-      currentMember = null;
-      showSession();
-    }
+    // Do not silently hide the page on a 401. The caller displays the error.
     throw new Error(result.error || 'Servern svarade med fel ' + response.status + '.');
   }
   return result;
@@ -287,7 +284,15 @@ $('loginForm').onsubmit = async event => {
       email: $('loginEmail').value.trim(),
       password: $('loginPassword').value
     });
-    currentMember = result.member;
+    // Verify that Safari actually retained and returns the session cookie.
+    // A successful password check is not enough if the browser loses the cookie.
+    let confirmed;
+    try {
+      confirmed = await api('/me');
+    } catch (verifyError) {
+      throw new Error('Lösenordet godkändes, men sessionen sparades inte i webbläsaren. Kontrollera att sidan öppnas på stockevikbackend.onrender.com och att cookies tillåts. (' + verifyError.message + ')');
+    }
+    currentMember = confirmed.member;
     $('loginPassword').value = '';
     showSession();
     view('feed');
@@ -302,12 +307,17 @@ $('logoutBtn').onclick = async () => {
   showSession();
 };
 (async function init() {
+  // Avoid an initial /me request overwriting a successful manual login.
+  const initialRequest = api('/me');
   try {
-    const result = await api('/me');
+    const result = await initialRequest;
+    if (currentMember) return;
     currentMember = result.member;
     showSession();
     await loadPosts();
-  } catch { currentMember = null; showSession(); }
+  } catch {
+    if (!currentMember) showSession();
+  }
 })();
 </script>
 </body>
