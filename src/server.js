@@ -38,7 +38,7 @@ app.use((req, res, next) => {
   if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && origin) {
     const myOrigin = `${req.protocol}://${req.get('host')}`;
     if (origin !== myOrigin && (!allowedOrigin || origin !== allowedOrigin)) {
-      return res.status(403).json({ error: 'Otillåtet ursprung.' });
+      return res.status(403).json({ error: 'OtillÃ¥tet ursprung.' });
     }
   }
   next();
@@ -111,20 +111,47 @@ async function seedOnlyForDemo() {
   console.log('Demo accounts checked (existing accounts left unchanged).');
 }
 
+// One-time administrator-triggered repair of the existing Kalle demo account.
+// Enable RESET_KALLE_PASSWORD=true in Render for one deploy, then remove it.
+async function resetKallePasswordOnce() {
+  if (process.env.RESET_KALLE_PASSWORD !== 'true') return;
+  const password = process.env.KALLE_PASSWORD;
+  if (!password || password.length < 12) {
+    throw new Error('RESET_KALLE_PASSWORD requires KALLE_PASSWORD of at least 12 characters.');
+  }
+  const passwordHash = await bcrypt.hash(password, 12);
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const {rows} = await client.query(`UPDATE members
+      SET password_hash=$1, status='active'
+      WHERE email=$2 RETURNING id`, [passwordHash, 'kalle@stockevik.test']);
+    if (rows.length !== 1) throw new Error('Kalle demo account not found: reset aborted.');
+    await client.query('DELETE FROM sessions WHERE member_id=$1', [rows[0].id]);
+    await client.query('COMMIT');
+    console.log('Kalle demo password reset; existing Kalle sessions cleared.');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 async function authenticate(req, res, next) {
   const token = req.cookies[cookieName];
-  if (!token || !/^[0-9a-f]{64}$/.test(token)) return res.status(401).json({error: 'Logga in först.'});
+  if (!token || !/^[0-9a-f]{64}$/.test(token)) return res.status(401).json({error: 'Logga in fÃ¶rst.'});
   try {
     const {rows} = await pool.query(`SELECT m.id, m.name, m.house, m.username, m.status, m.role FROM sessions s
        JOIN members m ON m.id=s.member_id WHERE s.token_hash=$1 AND s.expires_at > now()`, [hashToken(token)]);
-    if (!rows.length || rows[0].status !== 'active') return res.status(401).json({error:'Sessionen har gått ut.'});
+    if (!rows.length || rows[0].status !== 'active') return res.status(401).json({error:'Sessionen har gÃ¥tt ut.'});
     req.member = rows[0];
     next();
   } catch (err) { next(err); }
 }
 
 app.get('/api/health', async (_req, res, next) => {
-  try {await pool.query('SELECT 1'); res.json({ok:true, app:'Det händer i Stockevik', version:'backend-0.7'});}
+  try {await pool.query('SELECT 1'); res.json({ok:true, app:'Det hÃ¤nder i Stockevik', version:'backend-0.7'});}
   catch(err){next(err);}
 });
 
@@ -132,10 +159,10 @@ app.post('/api/login', loginLimiter, async (req, res, next) => {
   try {
     const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
     const password = typeof req.body?.password === 'string' ? req.body.password : '';
-    if (!email || password.length > 2000) return res.status(400).json({error:'Ange e-post och lösenord.'});
+    if (!email || password.length > 2000) return res.status(400).json({error:'Ange e-post och lÃ¶senord.'});
     const {rows} = await pool.query('SELECT * FROM members WHERE email=$1 AND status=$2', [email, 'active']);
     if (!rows.length || !(await bcrypt.compare(password, rows[0].password_hash))) {
-      return res.status(401).json({error:'Fel e-post eller lösenord.'});
+      return res.status(401).json({error:'Fel e-post eller lÃ¶senord.'});
     }
     const token = randomBytes(32).toString('hex');
     await pool.query('INSERT INTO sessions(token_hash,member_id,expires_at) VALUES ($1,$2,now() + interval \'7 days\')',[hashToken(token), rows[0].id]);
@@ -168,7 +195,7 @@ app.get('/api/posts', authenticate, async (_req, res, next) => {
 app.post('/api/posts', authenticate, writeLimiter, async (req, res, next) => {
   try {
     const body = safeText(req.body?.text, 5000);
-    if (!body) return res.status(400).json({error:'Inlägget måste innehålla 1–5000 tecken.'});
+    if (!body) return res.status(400).json({error:'InlÃ¤gget mÃ¥ste innehÃ¥lla 1â€“5000 tecken.'});
     const {rows} = await pool.query('INSERT INTO posts(member_id,body) VALUES ($1,$2) RETURNING id,created_at',[req.member.id,body]);
     res.status(201).json({post:{id:rows[0].id, text:body, author:req.member.name, authorId:req.member.id, date:rows[0].created_at, comments:[]}});
   } catch(err){next(err);}
@@ -176,12 +203,12 @@ app.post('/api/posts', authenticate, writeLimiter, async (req, res, next) => {
 
 app.post('/api/posts/:id/comments', authenticate, writeLimiter, async (req, res, next) => {
   try {
-    if (!/^\d+$/.test(req.params.id)) return res.status(400).json({error:'Ogiltigt inläggs-ID.'});
+    if (!/^\d+$/.test(req.params.id)) return res.status(400).json({error:'Ogiltigt inlÃ¤ggs-ID.'});
     const body=safeText(req.body?.text,2000);
-    if (!body) return res.status(400).json({error:'Kommentaren måste innehålla 1–2000 tecken.'});
+    if (!body) return res.status(400).json({error:'Kommentaren mÃ¥ste innehÃ¥lla 1â€“2000 tecken.'});
     const {rows}=await pool.query(`INSERT INTO comments(post_id,member_id,body)
       SELECT id,$2,$3 FROM posts WHERE id=$1 RETURNING id,created_at`,[req.params.id,req.member.id,body]);
-    if (!rows.length) return res.status(404).json({error:'Inlägget saknas.'});
+    if (!rows.length) return res.status(404).json({error:'InlÃ¤gget saknas.'});
     res.status(201).json({comment:{id:rows[0].id, text:body, author:req.member.name, authorId:req.member.id, date:rows[0].created_at}});
   } catch(err){next(err);}
 });
@@ -203,7 +230,7 @@ app.post('/api/register', registrationLimiter, async (req,res,next) => {
     const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
     const password = typeof req.body?.password === 'string' ? req.body.password : '';
     if (!name || !house || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 180 || password.length < 12 || password.length > 200) {
-      return res.status(400).json({error:'Ange namn, fastighet, giltig e-post och lösenord med minst 12 tecken.'});
+      return res.status(400).json({error:'Ange namn, fastighet, giltig e-post och lÃ¶senord med minst 12 tecken.'});
     }
     // A server-generated internal username is never used as a credential.
     const username = 'medlem_' + randomBytes(12).toString('hex');
@@ -211,12 +238,12 @@ app.post('/api/register', registrationLimiter, async (req,res,next) => {
     await pool.query(`INSERT INTO members(name,house,username,email,password_hash,status,role)
       VALUES($1,$2,$3,$4,$5,'pending','member') ON CONFLICT(email) DO NOTHING`,
       [name,house,username,email,hash]);
-    res.status(202).json({message:'Din ansökan är mottagen. Du kan logga in när en administratör har godkänt den.'});
+    res.status(202).json({message:'Din ansÃ¶kan Ã¤r mottagen. Du kan logga in nÃ¤r en administratÃ¶r har godkÃ¤nt den.'});
   } catch(err){next(err);}
 });
 
 function requireAdmin(req,res,next) {
-  if (req.member.role !== 'admin') return res.status(403).json({error:'Endast administratören har tillgång.'});
+  if (req.member.role !== 'admin') return res.status(403).json({error:'Endast administratÃ¶ren har tillgÃ¥ng.'});
   next();
 }
 app.get('/api/admin/applications', authenticate, requireAdmin, async (_req,res,next) => {
@@ -233,14 +260,14 @@ app.post('/api/admin/applications/:id/decision', authenticate, requireAdmin, wri
     const status = req.body.decision === 'approve' ? 'active' : 'inactive';
     const {rows} = await pool.query(`UPDATE members SET status=$2 WHERE id=$1 AND status='pending'
       RETURNING id`, [req.params.id,status]);
-    if (!rows.length) return res.status(404).json({error:'Ansökan hittades inte eller är redan behandlad.'});
+    if (!rows.length) return res.status(404).json({error:'AnsÃ¶kan hittades inte eller Ã¤r redan behandlad.'});
     res.json({ok:true});
   } catch(err){next(err);}
 });
 
 // Frontend and API share one origin, so the secure session cookie works in browsers.
 app.use(express.static('public'));
-app.use((req,res)=>res.status(404).json({error:'Okänd adress.'}));
+app.use((req,res)=>res.status(404).json({error:'OkÃ¤nd adress.'}));
 app.use((err,req,res,next)=>{
   console.error('API error:', err);
   res.status(500).json({error:'Ett serverfel uppstod.'});
@@ -249,6 +276,7 @@ app.use((err,req,res,next)=>{
 try {
   await initialize();
   await seedOnlyForDemo();
+  await resetKallePasswordOnce();
   // Explicit administrator assignment: set ADMIN_EMAIL to an existing account in Render.
   const adminEmail = (process.env.ADMIN_EMAIL || '').trim().toLowerCase();
   if (adminEmail) {
