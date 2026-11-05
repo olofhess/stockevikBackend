@@ -6,6 +6,20 @@ let currentMember = null;
 let posts = [];
 let members = [];
 
+function avatar(name, id, version, small=false) {
+  const holder = element('span', small ? 'avatar avatar-small' : 'avatar');
+  holder.textContent = (name || '?').slice(0,1).toUpperCase();
+  if (version && id != null) {
+    const img = document.createElement('img');
+    img.src = '/api/avatars/' + encodeURIComponent(id) + '?v=' + encodeURIComponent(version);
+    img.alt = ''; img.loading = 'lazy';
+    img.onerror = () => img.remove();
+    holder.append(img);
+  }
+  return holder;
+}
+
+
 function element(tag, cls, text) {
   const el = document.createElement(tag);
   if (cls) el.className = cls;
@@ -44,6 +58,9 @@ function showSession() {
   $('account').classList.toggle('hide', !signedIn);
   $('accountName').textContent = signedIn ? 'Inloggad som ' + currentMember.name : '';
   $('adminTab').classList.toggle('hide', !signedIn || currentMember.role !== 'admin');
+  $('avatarControls').classList.toggle('hide', !signedIn);
+  if (signedIn) $('avatarRemove').classList.toggle('hide', !currentMember.avatarVersion);
+  if (!signedIn) $('avatarStatus').textContent = '';
   if (signedIn) $('registrationView').classList.add('hide');
 }
 function view(tab) {
@@ -66,7 +83,7 @@ function renderPosts() {
   for (const p of posts) {
     const card = element('article','card');
     const header = element('div','postheader');
-    header.append(element('div','avatar',(p.author || '?').slice(0,1).toUpperCase()));
+    header.append(avatar(p.author, p.authorId, p.avatarVersion));
     const by = element('div');
     by.append(element('div','by',p.author || ''), element('div','date',formatDate(p.date)));
     header.append(by);
@@ -149,7 +166,9 @@ function renderPosts() {
     const area = element('div','hide');
     for (const c of comments) {
       const item = element('div','comment');
-      item.append(element('b','',`${c.author} · ${formatDate(c.date)}`), element('p','',c.text || ''));
+      const who = element('div','comment-author');
+      who.append(avatar(c.author, c.authorId, c.avatarVersion, true), element('b','',`${c.author} · ${formatDate(c.date)}`));
+      item.append(who, element('p','',c.text || ''));
       area.append(item);
     }
     const form = element('form','commentform');
@@ -305,3 +324,50 @@ $('logoutBtn').onclick = async () => {
     if (!currentMember) showSession();
   }
 })();
+
+// A single profile photo per account. Canvas strips photo metadata and shrinks image.
+$('avatarPick').onclick = () => $('avatarFile').click();
+$('avatarFile').onchange = async () => {
+  const file = $('avatarFile').files?.[0];
+  if (!file) return;
+  if (!file.type.startsWith('image/') || file.size > 12 * 1024 * 1024) {
+    alert('Välj en bild på högst 12 MB.'); $('avatarFile').value = ''; return;
+  }
+  const button = $('avatarPick'); button.disabled = true;
+  $('avatarStatus').textContent = 'Förbereder bilden …';
+  let url;
+  try {
+    url = URL.createObjectURL(file);
+    const image = new Image();
+    await new Promise((resolve,reject) => {
+      image.onload = resolve;
+      image.onerror = () => reject(new Error('Bilden kunde inte öppnas.'));
+      image.src = url;
+    });
+    const canvas = document.createElement('canvas');
+    const side = 256;
+    canvas.width = side; canvas.height = side;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Kan inte bearbeta bilden.');
+    const width = image.naturalWidth, height = image.naturalHeight;
+    const square = Math.min(width,height);
+    ctx.drawImage(image,(width-square)/2,(height-square)/2,square,square,0,0,side,side);
+    const jpegBase64 = canvas.toDataURL('image/jpeg',0.75).split(',')[1];
+    const result = await api('/me/avatar', 'PUT', {jpegBase64});
+    currentMember.avatarVersion = result.avatarVersion;
+    $('avatarStatus').textContent = 'Profilbilden är sparad.';
+    $('avatarRemove').classList.remove('hide');
+    await loadPosts();
+  } catch(err) { $('avatarStatus').textContent = err.message; }
+  finally { if (url) URL.revokeObjectURL(url); button.disabled = false; $('avatarFile').value = ''; }
+};
+$('avatarRemove').onclick = async () => {
+  if (!confirm('Ta bort din profilbild?')) return;
+  try {
+    await api('/me/avatar','DELETE');
+    currentMember.avatarVersion = null;
+    $('avatarRemove').classList.add('hide');
+    $('avatarStatus').textContent = 'Profilbilden är borttagen.';
+    await loadPosts();
+  } catch(err) { $('avatarStatus').textContent = err.message; }
+};

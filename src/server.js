@@ -16,7 +16,7 @@ const app = express();
 app.disable('x-powered-by');
 app.set('trust proxy', 1); // Render reverse proxy
 app.use(helmet());
-app.use(express.json({ limit: '20kb' }));
+app.use(express.json({ limit: '160kb' }));
 app.use(cookieParser());
 const production = process.env.NODE_ENV === 'production';
 const cookieName = 'stockevik_session';
@@ -47,7 +47,7 @@ app.use((req, res, next) => {
 const loginLimiter = rateLimit({windowMs: 15 * 60 * 1000, limit: 8, standardHeaders: 'draft-7', legacyHeaders: false});
 const writeLimiter = rateLimit({windowMs: 60 * 1000, limit: 25, standardHeaders: 'draft-7', legacyHeaders: false});
 const hashToken = token => createHash('sha256').update(token).digest('hex');
-const publicMember = m => ({id: m.id, name: m.name, house: m.house, username: m.username});
+const publicMember = m => ({id: m.id, name: m.name, house: m.house, username: m.username, avatarVersion: m.avatar_updated_at ? new Date(m.avatar_updated_at).getTime() : null});
 const selfMember = m => ({...publicMember(m), role: m.role});
 const registrationLimiter = rateLimit({windowMs:15*60*1000,limit:5,standardHeaders:'draft-7',legacyHeaders:false});
 const safeText = (t, max) => typeof t === 'string' && t.trim().length > 0 && t.trim().length <= max ? t.trim() : null;
@@ -88,6 +88,8 @@ async function initialize() {
   );
   CREATE INDEX IF NOT EXISTS comments_post ON comments(post_id, created_at);
   `);
+  await pool.query(`ALTER TABLE members ADD COLUMN IF NOT EXISTS avatar_data BYTEA;
+    ALTER TABLE members ADD COLUMN IF NOT EXISTS avatar_updated_at TIMESTAMPTZ;`);
   // Safe migration from v0.6. Existing members, posts and comments are retained.
   await pool.query(`ALTER TABLE members DROP CONSTRAINT IF EXISTS members_status_check;
     ALTER TABLE members ADD CONSTRAINT members_status_check CHECK (status IN ('active','inactive','pending'));`);
@@ -142,7 +144,7 @@ async function authenticate(req, res, next) {
   const token = req.cookies[cookieName];
   if (!token || !/^[0-9a-f]{64}$/.test(token)) return res.status(401).json({error: 'Logga in fÃ¶rst.'});
   try {
-    const {rows} = await pool.query(`SELECT m.id, m.name, m.house, m.username, m.status, m.role FROM sessions s
+    const {rows} = await pool.query(`SELECT m.id, m.name, m.house, m.username, m.status, m.role, m.avatar_updated_at FROM sessions s
        JOIN members m ON m.id=s.member_id WHERE s.token_hash=$1 AND s.expires_at > now()`, [hashToken(token)]);
     if (!rows.length || rows[0].status !== 'active') return res.status(401).json({error:'Sessionen har gÃ¥tt ut.'});
     req.member = rows[0];
@@ -151,7 +153,7 @@ async function authenticate(req, res, next) {
 }
 
 app.get('/api/health', async (_req, res, next) => {
-  try {await pool.query('SELECT 1'); res.json({ok:true, app:'Det hÃ¤nder i Stockevik', version:'backend-0.7'});}
+  try {await pool.query('SELECT 1'); res.json({ok:true, app:'Det hÃ¤nder i Stockevik', version:'backend-0.9'});}
   catch(err){next(err);}
 });
 
@@ -182,13 +184,52 @@ app.post('/api/logout', async (req, res, next) => {
 
 app.get('/api/me', authenticate, (req, res) => res.json({member:selfMember(req.member)}));
 
+// Small, compressed profile pictures are stored inside PostgreSQL, not on Render's ephemeral disk.
+// Only approved signed-in members may view pictures. Only the owner may change theirs.
+app.get('/api/avatars/:id', authenticate, async (req, res, next) => {
+  try {
+    if (!/^\d+$/.test(req.params.id)) return res.sendStatus(404);
+    const {rows} = await pool.query(`SELECT avatar_data FROM members WHERE id=$1 AND status='active'`, [req.params.id]);
+    if (!rows.length || !rows[0].avatar_data) return res.sendStatus(404);
+    res.set('Content-Type', 'image/jpeg');
+    res.set('Cache-Control', 'private, no-store');
+    res.set('X-Content-Type-Options', 'nosniff');
+    res.send(rows[0].avatar_data);
+  } catch(err) { next(err); }
+});
+
+app.put('/api/me/avatar', authenticate, writeLimiter, async (req, res, next) => {
+  try {
+    const encoded = req.body?.jpegBase64;
+    if (typeof encoded !== 'string' || encoded.length > 140000 || encoded.length < 50 ||
+        !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) {
+      return res.status(400).json({error:'Bilden kunde inte läsas. Välj en JPEG-bild.'});
+    }
+    const data = Buffer.from(encoded, 'base64');
+    if (data.length > 100000 || data.length < 100 || data[0] !== 0xff || data[1] !== 0xd8 ||
+        data[data.length-2] !== 0xff || data[data.length-1] !== 0xd9) {
+      return res.status(400).json({error:'Profilbilden måste vara en JPEG på högst 100 kB.'});
+    }
+    const {rows} = await pool.query(`UPDATE members SET avatar_data=$1,avatar_updated_at=now()
+      WHERE id=$2 RETURNING avatar_updated_at`, [data, req.member.id]);
+    res.json({ok:true, avatarVersion:new Date(rows[0].avatar_updated_at).getTime()});
+  } catch(err) { next(err); }
+});
+
+app.delete('/api/me/avatar', authenticate, writeLimiter, async (req,res,next) => {
+  try {
+    await pool.query('UPDATE members SET avatar_data=NULL,avatar_updated_at=NULL WHERE id=$1',[req.member.id]);
+    res.json({ok:true});
+  } catch(err) { next(err); }
+});
+
 app.get('/api/posts', authenticate, async (_req, res, next) => {
   try {
-    const {rows} = await pool.query(`SELECT p.id, p.body, p.created_at, m.name AS author, m.id AS author_id,
-      COALESCE((SELECT json_agg(json_build_object('id',c.id,'text',c.body,'date',c.created_at,'author',cm.name,'authorId',cm.id) ORDER BY c.created_at,c.id)
+    const {rows} = await pool.query(`SELECT p.id, p.body, p.created_at, m.name AS author, m.id AS author_id, m.avatar_updated_at AS author_avatar_version,
+      COALESCE((SELECT json_agg(json_build_object('id',c.id,'text',c.body,'date',c.created_at,'author',cm.name,'authorId',cm.id,'avatarVersion',cm.avatar_updated_at) ORDER BY c.created_at,c.id)
       FROM comments c JOIN members cm ON cm.id=c.member_id WHERE c.post_id=p.id),'[]'::json) AS comments
       FROM posts p JOIN members m ON m.id=p.member_id ORDER BY p.created_at DESC,p.id DESC LIMIT 100`);
-    res.json({posts:rows.map(p=>({id:p.id, text:p.body, date:p.created_at, author:p.author, authorId:p.author_id, comments:p.comments}))});
+    res.json({posts:rows.map(p=>({id:p.id, text:p.body, date:p.created_at, author:p.author, authorId:p.author_id, avatarVersion:p.author_avatar_version ? new Date(p.author_avatar_version).getTime() : null, comments:p.comments}))});
   } catch(err){next(err);}
 });
 
@@ -197,7 +238,7 @@ app.post('/api/posts', authenticate, writeLimiter, async (req, res, next) => {
     const body = safeText(req.body?.text, 5000);
     if (!body) return res.status(400).json({error:'InlÃ¤gget mÃ¥ste innehÃ¥lla 1â€“5000 tecken.'});
     const {rows} = await pool.query('INSERT INTO posts(member_id,body) VALUES ($1,$2) RETURNING id,created_at',[req.member.id,body]);
-    res.status(201).json({post:{id:rows[0].id, text:body, author:req.member.name, authorId:req.member.id, date:rows[0].created_at, comments:[]}});
+    res.status(201).json({post:{id:rows[0].id, text:body, author:req.member.name, authorId:req.member.id, avatarVersion:req.member.avatar_updated_at ? new Date(req.member.avatar_updated_at).getTime() : null, date:rows[0].created_at, comments:[]}});
   } catch(err){next(err);}
 });
 
@@ -248,14 +289,14 @@ app.post('/api/posts/:id/comments', authenticate, writeLimiter, async (req, res,
     const {rows}=await pool.query(`INSERT INTO comments(post_id,member_id,body)
       SELECT id,$2,$3 FROM posts WHERE id=$1 RETURNING id,created_at`,[req.params.id,req.member.id,body]);
     if (!rows.length) return res.status(404).json({error:'InlÃ¤gget saknas.'});
-    res.status(201).json({comment:{id:rows[0].id, text:body, author:req.member.name, authorId:req.member.id, date:rows[0].created_at}});
+    res.status(201).json({comment:{id:rows[0].id, text:body, author:req.member.name, authorId:req.member.id, avatarVersion:req.member.avatar_updated_at ? new Date(req.member.avatar_updated_at).getTime() : null, date:rows[0].created_at}});
   } catch(err){next(err);}
 });
 
 // No public member directory. Never send email, phone or password hashes to other members.
 app.get('/api/members', authenticate, async (req, res, next) => {
   try {
-    const {rows}=await pool.query('SELECT id,name,house,username FROM members WHERE status=$1 ORDER BY name',['active']);
+    const {rows}=await pool.query('SELECT id,name,house,username,avatar_updated_at FROM members WHERE status=$1 ORDER BY name',['active']);
     res.json({members:rows.map(publicMember)});
   } catch(err){next(err);}
 });
