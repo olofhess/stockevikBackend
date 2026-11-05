@@ -58,11 +58,12 @@ main,.sidebar,.card{min-width:0}
 .avatar img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;border-radius:50%}
 .avatar-small{width:27px;height:27px;font-size:12px;margin-right:6px}
 .comment-author{display:flex;align-items:center;gap:3px}
+.profile-photo{display:flex;justify-content:center;margin:14px 0}.profile-photo .avatar{width:106px;height:106px;font-size:42px}
 </style>
 </head>
 <body>
-<header><div class="top"><div class="brand" aria-hidden="true">⚓</div><div><div class="name">Det händer i Stockevik</div><div class="tag">Vår egen mötesplats · utan annonser</div></div><div class="pill">Vår mötesplats</div><div id="account" class="account hide"><span id="accountName" class="accountname"></span><div id="avatarControls" class="hide" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap"><button class="btn subtle" id="avatarPick" type="button">📷 Min profilbild</button><button class="btn subtle hide" id="avatarRemove" type="button">Ta bort bild</button><input class="hide" id="avatarFile" type="file" accept="image/*"><span id="avatarStatus" class="small" role="status"></span></div><button id="logoutBtn" class="btn subtle" type="button">Logga ut</button></div></div></header>
-<section id="loginView" class="loginwall"><div class="card"><div class="eyebrow">Inloggning · version 0.9</div><h2 style="font:28px Georgia,serif;margin:7px 0 12px">Välkommen tillbaka!</h2><p>Logga in med din e-postadress och ditt lösenord.</p><form id="loginForm"><label for="loginEmail">E-postadress</label><input id="loginEmail" type="email" autocomplete="username" required placeholder="din@epost.se"><div class="field"><label for="loginPassword">Lösenord</label><input id="loginPassword" type="password" autocomplete="current-password" required></div><button class="btn" type="submit">Logga in</button><p class="small" id="loginError" role="alert"></p></form><button id="registerToggle" class="linkbtn" type="button">Ansök om medlemskap</button><div class="note">Inlägg och kommentarer delas mellan godkända medlemmar. Kontakta administratören om din ansökan väntar på godkännande.</div></div></section>
+<header><div class="top"><div class="brand" aria-hidden="true">⚓</div><div><div class="name">Det händer i Stockevik</div><div class="tag">Vår egen mötesplats · utan annonser</div></div><div class="pill">Vår mötesplats</div><div id="account" class="account hide"><span id="accountName" class="accountname"></span><button id="logoutBtn" class="btn subtle" type="button">Logga ut</button></div></div></header>
+<section id="loginView" class="loginwall"><div class="card"><div class="eyebrow">Inloggning · version 1.0</div><h2 style="font:28px Georgia,serif;margin:7px 0 12px">Välkommen tillbaka!</h2><p>Logga in med din e-postadress och ditt lösenord.</p><form id="loginForm"><label for="loginEmail">E-postadress</label><input id="loginEmail" type="email" autocomplete="username" required placeholder="din@epost.se"><div class="field"><label for="loginPassword">Lösenord</label><input id="loginPassword" type="password" autocomplete="current-password" required></div><button class="btn" type="submit">Logga in</button><p class="small" id="loginError" role="alert"></p></form><button id="registerToggle" class="linkbtn" type="button">Ansök om medlemskap</button><div class="note">Inlägg och kommentarer delas mellan godkända medlemmar. Kontakta administratören om din ansökan väntar på godkännande.</div></div></section>
 <section id="registrationView" class="loginwall hide"><div class="card"><h2>Ansök om medlemskap</h2><p class="small">Endast boende som godkänns av administratören får tillgång till anslagstavlan. Ingen automatisk e-postbekräftelse skickas i denna testversion.</p><form id="registrationForm">
 <div class="field"><label for="regName">Namn</label><input id="regName" required maxlength="100" autocomplete="name"></div>
 <div class="field"><label for="regHouse">Fastighet / hus</label><input id="regHouse" required maxlength="100"></div>
@@ -73,10 +74,26 @@ main,.sidebar,.card{min-width:0}
 <div class="wrap hide" id="appWrap">
  <main>
   <section class="card"><div class="eyebrow">Vår gemensamma anslagstavla</div><div class="welcome">Välkommen till vår mötesplats!</div><div class="small">Nyheter, bilder och samtal mellan grannar – utan annonser.</div></section>
-  <nav class="tabbar" aria-label="Sidor"><button id="feedTab" class="active">Anslagstavlan</button><button id="membersTab">Medlemmar</button><button id="adminTab" class="hide">Ansökningar</button></nav>
+  <nav class="tabbar" aria-label="Sidor"><button id="feedTab" class="active">Anslagstavlan</button><button id="membersTab">Medlemmar</button><button id="profileTab">Min profil</button><button id="adminTab" class="hide">Ansökningar</button></nav>
   <div id="feedView">
    <section class="card"><h2>Skriv ett inlägg</h2><textarea id="postText" maxlength="5000" placeholder="Vad vill du dela med grannarna?"></textarea><div class="actions"><span class="small">📷 Bilder kommer senare</span><button class="btn" id="postBtn">Publicera</button></div></section>
    <div class="small" id="feedStatus" role="status"></div><div id="posts" aria-live="polite"></div>
+  </div>
+  <div id="profileView" class="hide">
+   <section class="card"><h2>Min profil</h2><div id="profilePhoto" class="profile-photo"></div><div class="actions" style="justify-content:flex-start;flex-wrap:wrap"><button class="btn subtle" id="avatarPick" type="button">Byt profilbild</button><button class="btn subtle hide" id="avatarRemove" type="button">Ta bort bild</button></div><input class="hide" id="avatarFile" type="file" accept="image/*"><p id="avatarStatus" class="small" role="status"></p></section>
+   <section class="card"><h2>Mina uppgifter</h2><form id="profileForm">
+    <div class="field"><label for="profileName">Namn</label><input id="profileName" required maxlength="100" autocomplete="name"></div>
+    <div class="field"><label for="profileHouse">Fastighet / hus</label><input id="profileHouse" required maxlength="100"></div>
+    <div class="field"><label for="profileEmail">E-postadress</label><input id="profileEmail" type="email" readonly autocomplete="email"></div>
+    <p class="small">Byte av e-postadress aktiveras när vi har e-postverifiering.</p>
+    <button class="btn" type="submit">Spara profil</button><p id="profileStatus" class="small" role="status"></p>
+   </form></section>
+   <section class="card"><h2>Byt lösenord</h2><form id="passwordForm">
+    <div class="field"><label for="oldPassword">Nuvarande lösenord</label><input id="oldPassword" type="password" required autocomplete="current-password"></div>
+    <div class="field"><label for="newPassword">Nytt lösenord (minst 8 tecken)</label><input id="newPassword" type="password" required minlength="8" maxlength="200" autocomplete="new-password"></div>
+    <div class="field"><label for="confirmPassword">Upprepa nytt lösenord</label><input id="confirmPassword" type="password" required minlength="8" maxlength="200" autocomplete="new-password"></div>
+    <button class="btn" type="submit">Ändra lösenord</button><p id="passwordStatus" class="small" role="status"></p>
+   </form></section>
   </div>
   <div id="adminView" class="hide"><section class="card"><h2>Medlemsansökningar</h2><p class="small">Godkänn bara personer som du känner tillhör Stockevik. E-postadresserna visas enbart för administratören.</p><div id="applicationsList"></div><p id="adminStatus" role="status" class="small"></p></section></div>
   <div id="membersView" class="hide">
@@ -85,7 +102,7 @@ main,.sidebar,.card{min-width:0}
  </main>
  <aside class="sidebar"><section class="card"><h3>Om vår mötesplats</h3><p class="info">Ett privat samtalsforum för oss i Stockevik.</p><p class="info">Här kan vi dela nyheter, tips, frågor och små händelser från vår by.</p></section><section class="card"><h3>Bilder från Stockevik</h3><div class="boxpic">📷<br>Här kommer våra bilder</div><p class="notice">Bildgalleri tillkommer i nästa version.</p></section><section class="card"><h3>Enkelhet och integritet</h3><p class="info">Ingen reklam och ingen profilering. Medlemsuppgifter ska förvaltas av föreningen.</p></section></aside>
 </div>
-<footer>Det händer i Stockevik · Version 0.9 · profilbilder</footer>
-<script src="/app.js?v=09" defer></script>
+<footer>Det händer i Stockevik · Version 1.0 · Min profil</footer>
+<script src="/app.js?v=100" defer></script>
 </body>
 </html>

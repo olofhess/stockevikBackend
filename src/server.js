@@ -56,7 +56,7 @@ const loginLimiter = rateLimit({windowMs: 15 * 60 * 1000, limit: 8, standardHead
 const writeLimiter = rateLimit({windowMs: 60 * 1000, limit: 25, standardHeaders: 'draft-7', legacyHeaders: false});
 const hashToken = token => createHash('sha256').update(token).digest('hex');
 const publicMember = m => ({id: m.id, name: m.name, house: m.house, username: m.username, avatarVersion: m.avatar_updated_at ? new Date(m.avatar_updated_at).getTime() : null});
-const selfMember = m => ({...publicMember(m), role: m.role});
+const selfMember = m => ({...publicMember(m), role: m.role, email: m.email});
 const registrationLimiter = rateLimit({windowMs:15*60*1000,limit:5,standardHeaders:'draft-7',legacyHeaders:false});
 const safeText = (t, max) => typeof t === 'string' && t.trim().length > 0 && t.trim().length <= max ? t.trim() : null;
 
@@ -152,7 +152,7 @@ async function authenticate(req, res, next) {
   const token = req.cookies[cookieName];
   if (!token || !/^[0-9a-f]{64}$/.test(token)) return res.status(401).json({error: 'Logga in fÃ¶rst.'});
   try {
-    const {rows} = await pool.query(`SELECT m.id, m.name, m.house, m.username, m.status, m.role, m.avatar_updated_at FROM sessions s
+    const {rows} = await pool.query(`SELECT m.id, m.name, m.house, m.username, m.status, m.role, m.email, m.avatar_updated_at FROM sessions s
        JOIN members m ON m.id=s.member_id WHERE s.token_hash=$1 AND s.expires_at > now()`, [hashToken(token)]);
     if (!rows.length || rows[0].status !== 'active') return res.status(401).json({error:'Sessionen har gÃ¥tt ut.'});
     req.member = rows[0];
@@ -161,7 +161,7 @@ async function authenticate(req, res, next) {
 }
 
 app.get('/api/health', async (_req, res, next) => {
-  try {await pool.query('SELECT 1'); res.json({ok:true, app:'Det hÃ¤nder i Stockevik', version:'backend-0.9'});}
+  try {await pool.query('SELECT 1'); res.json({ok:true, app:'Det hÃ¤nder i Stockevik', version:'backend-1.0'});}
   catch(err){next(err);}
 });
 
@@ -191,6 +191,46 @@ app.post('/api/logout', async (req, res, next) => {
 });
 
 app.get('/api/me', authenticate, (req, res) => res.json({member:selfMember(req.member)}));
+
+
+// Profile edits are limited to the authenticated account.
+app.put('/api/me/profile', authenticate, writeLimiter, async (req,res,next) => {
+  try {
+    const name = safeText(req.body?.name,100);
+    const house = safeText(req.body?.house,100);
+    if (!name || !house) return res.status(400).json({error:'Ange namn och fastighet.'});
+    const {rows} = await pool.query(`UPDATE members SET name=$1,house=$2 WHERE id=$3
+      RETURNING id,name,house,username,email,role,avatar_updated_at`,[name,house,req.member.id]);
+    res.json({member:selfMember(rows[0])});
+  } catch(err) { next(err); }
+});
+
+app.put('/api/me/password', authenticate, writeLimiter, async (req,res,next) => {
+  try {
+    const oldPassword = req.body?.oldPassword;
+    const newPassword = req.body?.newPassword;
+    if (typeof oldPassword !== 'string' || typeof newPassword !== 'string' ||
+        oldPassword.length > 2000 || newPassword.length < 8 || newPassword.length > 200) {
+      return res.status(400).json({error:'Ange nuvarande lösenord och ett nytt med minst 8 tecken.'});
+    }
+    const {rows} = await pool.query('SELECT password_hash FROM members WHERE id=$1',[req.member.id]);
+    if (!rows.length || !(await bcrypt.compare(oldPassword, rows[0].password_hash))) {
+      return res.status(403).json({error:'Nuvarande lösenord är fel.'});
+    }
+    const passwordHash = await bcrypt.hash(newPassword,12);
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('UPDATE members SET password_hash=$1 WHERE id=$2',[passwordHash,req.member.id]);
+      // Keep only this browser's current session; sign out other devices.
+      await client.query('DELETE FROM sessions WHERE member_id=$1 AND token_hash<>$2',
+        [req.member.id,hashToken(req.cookies[cookieName])]);
+      await client.query('COMMIT');
+      res.json({ok:true});
+    } catch(error) { await client.query('ROLLBACK'); throw error; }
+    finally {client.release();}
+  } catch(err) { next(err); }
+});
 
 // Small, compressed profile pictures are stored inside PostgreSQL, not on Render's ephemeral disk.
 // Only approved signed-in members may view pictures. Only the owner may change theirs.

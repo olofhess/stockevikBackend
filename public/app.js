@@ -1,5 +1,5 @@
 'use strict';
-// Version 0.6. The web page is served by the Stockevik backend on the SAME origin.
+// Version 1.0. The web page is served by the Stockevik backend on the SAME origin.
 // Authentication and member identities are controlled by the server, never by localStorage.
 const $ = id => document.getElementById(id);
 let currentMember = null;
@@ -58,24 +58,25 @@ function showSession() {
   $('account').classList.toggle('hide', !signedIn);
   $('accountName').textContent = signedIn ? 'Inloggad som ' + currentMember.name : '';
   $('adminTab').classList.toggle('hide', !signedIn || currentMember.role !== 'admin');
-  $('avatarControls').classList.toggle('hide', !signedIn);
-  if (signedIn) $('avatarRemove').classList.toggle('hide', !currentMember.avatarVersion);
+  if (signedIn) { $('avatarRemove').classList.toggle('hide', !currentMember.avatarVersion); renderProfile(); }
   if (!signedIn) $('avatarStatus').textContent = '';
   if (signedIn) $('registrationView').classList.add('hide');
 }
 function view(tab) {
   if (tab === 'admin' && currentMember?.role !== 'admin') tab='feed';
-  for (const t of ['feed','members','admin']) {
+  for (const t of ['feed','members','profile','admin']) {
     $(t+'View').classList.toggle('hide',t!==tab);
     $(t+'Tab').classList.toggle('active',t===tab);
   }
   if (tab === 'members') loadMembers();
+  if (tab === 'profile') renderProfile();
   if (tab === 'feed') loadPosts();
   if (tab === 'admin') loadApplications();
 }
 $('feedTab').onclick = () => view('feed');
 $('membersTab').onclick = () => view('members');
 $('adminTab').onclick = () => view('admin');
+$('profileTab').onclick = () => view('profile');
 
 function renderPosts() {
   const host = $('posts'); host.replaceChildren();
@@ -357,6 +358,7 @@ $('avatarFile').onchange = async () => {
     currentMember.avatarVersion = result.avatarVersion;
     $('avatarStatus').textContent = 'Profilbilden är sparad.';
     $('avatarRemove').classList.remove('hide');
+    renderProfilePhoto();
     await loadPosts();
   } catch(err) { $('avatarStatus').textContent = err.message; }
   finally { if (url) URL.revokeObjectURL(url); button.disabled = false; $('avatarFile').value = ''; }
@@ -367,7 +369,57 @@ $('avatarRemove').onclick = async () => {
     await api('/me/avatar','DELETE');
     currentMember.avatarVersion = null;
     $('avatarRemove').classList.add('hide');
+    renderProfilePhoto();
     $('avatarStatus').textContent = 'Profilbilden är borttagen.';
     await loadPosts();
   } catch(err) { $('avatarStatus').textContent = err.message; }
+};
+
+
+// The current member can change personal fields and password only through authenticated API calls.
+function renderProfilePhoto() {
+  const host = $('profilePhoto');
+  host.replaceChildren();
+  if (currentMember) host.append(avatar(currentMember.name, currentMember.id, currentMember.avatarVersion));
+}
+function renderProfile() {
+  if (!currentMember) return;
+  renderProfilePhoto();
+  $('profileName').value = currentMember.name || '';
+  $('profileHouse').value = currentMember.house || '';
+  $('profileEmail').value = currentMember.email || '';
+}
+$('profileForm').onsubmit = async event => {
+  event.preventDefault();
+  const button = $('profileForm').querySelector('button[type="submit"]');
+  const status = $('profileStatus');
+  button.disabled = true; status.textContent = 'Sparar …';
+  try {
+    const result = await api('/me/profile','PUT',{
+      name:$('profileName').value, house:$('profileHouse').value
+    });
+    currentMember = result.member;
+    $('accountName').textContent = 'Inloggad som ' + currentMember.name;
+    status.textContent = 'Profilen är sparad.';
+    renderProfilePhoto();
+    await loadPosts();
+  } catch(err) { status.textContent = err.message; }
+  finally { button.disabled = false; }
+};
+$('passwordForm').onsubmit = async event => {
+  event.preventDefault();
+  const status = $('passwordStatus');
+  const button = $('passwordForm').querySelector('button[type="submit"]');
+  const oldPassword = $('oldPassword').value;
+  const newPassword = $('newPassword').value;
+  if (newPassword !== $('confirmPassword').value) {
+    status.textContent = 'De nya lösenorden är inte lika.'; return;
+  }
+  button.disabled = true; status.textContent = 'Ändrar lösenord …';
+  try {
+    await api('/me/password','PUT',{oldPassword,newPassword});
+    $('passwordForm').reset();
+    status.textContent = 'Lösenordet är ändrat.';
+  } catch(err) { status.textContent = err.message; }
+  finally { button.disabled = false; }
 };
