@@ -15,7 +15,15 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 5 });
 const app = express();
 app.disable('x-powered-by');
 app.set('trust proxy', 1); // Render reverse proxy
-app.use(helmet());
+// Allow temporary blob: image URLs created by the profile-photo picker.
+// Other Helmet security headers and CSP restrictions remain enabled.
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      imgSrc: ["'self'", 'data:', 'blob:']
+    }
+  }
+}));
 app.use(express.json({ limit: '160kb' }));
 app.use(cookieParser());
 const production = process.env.NODE_ENV === 'production';
