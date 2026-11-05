@@ -70,7 +70,58 @@ function renderPosts() {
     const by = element('div');
     by.append(element('div','by',p.author || ''), element('div','date',formatDate(p.date)));
     header.append(by);
-    card.append(header, element('div','posttext',p.text || ''));
+    card.append(header);
+    const postText = element('div','posttext',p.text || '');
+    card.append(postText);
+    // The button is just a convenience. The server independently enforces ownership.
+    if (currentMember && String(p.authorId) === String(currentMember.id)) {
+      const editActions = element('div','actions');
+      const editButton = element('button','btn subtle','Redigera');
+      editButton.type = 'button';
+      editActions.append(editButton);
+      card.append(editActions);
+      editButton.onclick = () => {
+        if (card.querySelector('.posteditform')) return;
+        const form = element('form','posteditform');
+        const field = element('textarea');
+        field.maxLength = 5000;
+        field.required = true;
+        field.value = p.text || '';
+        field.setAttribute('aria-label','Redigera inlägg');
+        const controls = element('div','actions');
+        const cancel = element('button','btn subtle','Avbryt');
+        cancel.type = 'button';
+        const save = element('button','btn','Spara');
+        save.type = 'submit';
+        controls.append(cancel,save);
+        form.append(field,controls);
+        postText.classList.add('hide');
+        editActions.classList.add('hide');
+        postText.after(form);
+        const close = () => {
+          form.remove();
+          postText.classList.remove('hide');
+          editActions.classList.remove('hide');
+        };
+        cancel.onclick = close;
+        form.onsubmit = async event => {
+          event.preventDefault();
+          const text = field.value.trim();
+          if (!text) { field.focus(); return; }
+          save.disabled = true;
+          cancel.disabled = true;
+          try {
+            await api('/posts/' + p.id, 'PUT', {text});
+            await loadPosts();
+          } catch (err) {
+            alert(err.message);
+            save.disabled = false;
+            cancel.disabled = false;
+          }
+        };
+        field.focus();
+      };
+    }
     const comments = Array.isArray(p.comments) ? p.comments : [];
     const footer = element('div','postfooter');
     const toggle = element('button','linkbtn',`💬 Kommentarer (${comments.length})`);

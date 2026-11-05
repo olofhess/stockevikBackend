@@ -31,7 +31,7 @@ app.use((req, res, next) => {
     res.set('Access-Control-Allow-Credentials', 'true');
     res.set('Vary', 'Origin');
     res.set('Access-Control-Allow-Headers', 'Content-Type');
-    res.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.set('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
   }
   if (req.method === 'OPTIONS') return origin && origin === allowedOrigin ? res.sendStatus(204) : res.sendStatus(403);
   // Protect cookie-authenticated writes from cross-site requests.
@@ -199,6 +199,26 @@ app.post('/api/posts', authenticate, writeLimiter, async (req, res, next) => {
     const {rows} = await pool.query('INSERT INTO posts(member_id,body) VALUES ($1,$2) RETURNING id,created_at',[req.member.id,body]);
     res.status(201).json({post:{id:rows[0].id, text:body, author:req.member.name, authorId:req.member.id, date:rows[0].created_at, comments:[]}});
   } catch(err){next(err);}
+});
+
+// Only the author can edit a post. Authentication and ownership are checked in PostgreSQL.
+app.put('/api/posts/:id', authenticate, writeLimiter, async (req, res, next) => {
+  try {
+    if (!/^\d+$/.test(req.params.id)) return res.status(400).json({error:'Ogiltigt inläggs-ID.'});
+    const body = safeText(req.body?.text, 5000);
+    if (!body) return res.status(400).json({error:'Inlägget måste innehålla 1–5000 tecken.'});
+    const {rows} = await pool.query(
+      'UPDATE posts SET body=$1 WHERE id=$2 AND member_id=$3 RETURNING id',
+      [body, req.params.id, req.member.id]
+    );
+    if (!rows.length) {
+      const found = await pool.query('SELECT 1 FROM posts WHERE id=$1', [req.params.id]);
+      return res.status(found.rowCount ? 403 : 404).json({
+        error: found.rowCount ? 'Du kan bara redigera dina egna inlägg.' : 'Inlägget saknas.'
+      });
+    }
+    res.json({ok:true});
+  } catch (err) { next(err); }
 });
 
 app.post('/api/posts/:id/comments', authenticate, writeLimiter, async (req, res, next) => {
