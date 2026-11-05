@@ -24,7 +24,7 @@ app.use(helmet({
     }
   }
 }));
-app.use(express.json({ limit: '160kb' }));
+app.use(express.json({ limit: '550kb' }));
 app.use(cookieParser());
 const production = process.env.NODE_ENV === 'production';
 const cookieName = 'stockevik_session';
@@ -59,6 +59,19 @@ const publicMember = m => ({id: m.id, name: m.name, house: m.house, username: m.
 const selfMember = m => ({...publicMember(m), role: m.role, email: m.email});
 const registrationLimiter = rateLimit({windowMs:15*60*1000,limit:5,standardHeaders:'draft-7',legacyHeaders:false});
 const safeText = (t, max) => typeof t === 'string' && t.trim().length > 0 && t.trim().length <= max ? t.trim() : null;
+// Accept only small, genuine-looking JPEG data produced by our browser image compressor.
+function postImageBuffer(encoded) {
+  if (encoded === undefined || encoded === null) return null;
+  if (typeof encoded !== 'string' || encoded.length < 50 || encoded.length > 410000 ||
+      !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) throw new Error('Ogiltig bilddata.');
+  const buffer = Buffer.from(encoded, 'base64');
+  if (buffer.length < 100 || buffer.length > 300000 || buffer[0] !== 0xff ||
+      buffer[1] !== 0xd8 || buffer[buffer.length-2] !== 0xff || buffer[buffer.length-1] !== 0xd9) {
+    throw new Error('Bilden måste vara en JPEG på högst 300 kB.');
+  }
+  return buffer;
+}
+
 
 async function initialize() {
   await pool.query(`
@@ -98,6 +111,8 @@ async function initialize() {
   `);
   await pool.query(`ALTER TABLE members ADD COLUMN IF NOT EXISTS avatar_data BYTEA;
     ALTER TABLE members ADD COLUMN IF NOT EXISTS avatar_updated_at TIMESTAMPTZ;`);
+  // Each post can have one compressed JPEG, stored durably in PostgreSQL.
+  await pool.query('ALTER TABLE posts ADD COLUMN IF NOT EXISTS image_data BYTEA;');
   // Safe migration from v0.6. Existing members, posts and comments are retained.
   await pool.query(`ALTER TABLE members DROP CONSTRAINT IF EXISTS members_status_check;
     ALTER TABLE members ADD CONSTRAINT members_status_check CHECK (status IN ('active','inactive','pending'));`);
@@ -271,22 +286,39 @@ app.delete('/api/me/avatar', authenticate, writeLimiter, async (req,res,next) =>
   } catch(err) { next(err); }
 });
 
+// Images are private: only logged-in approved members can retrieve them.
+app.get('/api/posts/:id/image', authenticate, async (req,res,next) => {
+  try {
+    if (!/^\d+$/.test(req.params.id)) return res.sendStatus(404);
+    const {rows} = await pool.query('SELECT image_data FROM posts WHERE id=$1', [req.params.id]);
+    if (!rows.length || !rows[0].image_data) return res.sendStatus(404);
+    res.set('Content-Type','image/jpeg');
+    res.set('Cache-Control','private, no-store');
+    res.set('X-Content-Type-Options','nosniff');
+    res.send(rows[0].image_data);
+  } catch(err) { next(err); }
+});
+
 app.get('/api/posts', authenticate, async (_req, res, next) => {
   try {
-    const {rows} = await pool.query(`SELECT p.id, p.body, p.created_at, m.name AS author, m.id AS author_id, m.avatar_updated_at AS author_avatar_version,
+    const {rows} = await pool.query(`SELECT p.id, p.body, p.created_at, (p.image_data IS NOT NULL) AS has_image, m.name AS author, m.id AS author_id, m.avatar_updated_at AS author_avatar_version,
       COALESCE((SELECT json_agg(json_build_object('id',c.id,'text',c.body,'date',c.created_at,'author',cm.name,'authorId',cm.id,'avatarVersion',cm.avatar_updated_at) ORDER BY c.created_at,c.id)
       FROM comments c JOIN members cm ON cm.id=c.member_id WHERE c.post_id=p.id),'[]'::json) AS comments
       FROM posts p JOIN members m ON m.id=p.member_id ORDER BY p.created_at DESC,p.id DESC LIMIT 100`);
-    res.json({posts:rows.map(p=>({id:p.id, text:p.body, date:p.created_at, author:p.author, authorId:p.author_id, avatarVersion:p.author_avatar_version ? new Date(p.author_avatar_version).getTime() : null, comments:p.comments}))});
+    res.json({posts:rows.map(p=>({id:p.id, text:p.body, date:p.created_at, author:p.author, authorId:p.author_id, avatarVersion:p.author_avatar_version ? new Date(p.author_avatar_version).getTime() : null, hasImage:p.has_image, comments:p.comments}))});
   } catch(err){next(err);}
 });
 
 app.post('/api/posts', authenticate, writeLimiter, async (req, res, next) => {
   try {
     const body = safeText(req.body?.text, 5000);
-    if (!body) return res.status(400).json({error:'InlÃ¤gget mÃ¥ste innehÃ¥lla 1â€“5000 tecken.'});
-    const {rows} = await pool.query('INSERT INTO posts(member_id,body) VALUES ($1,$2) RETURNING id,created_at',[req.member.id,body]);
-    res.status(201).json({post:{id:rows[0].id, text:body, author:req.member.name, authorId:req.member.id, avatarVersion:req.member.avatar_updated_at ? new Date(req.member.avatar_updated_at).getTime() : null, date:rows[0].created_at, comments:[]}});
+    if (!body) return res.status(400).json({error:'Skriv en kort text till bilden eller inlägget.'});
+    let imageData;
+    try { imageData = postImageBuffer(req.body?.jpegBase64); }
+    catch (err) { return res.status(400).json({error:err.message}); }
+    const {rows} = await pool.query('INSERT INTO posts(member_id,body,image_data) VALUES ($1,$2,$3) RETURNING id,created_at',
+      [req.member.id,body,imageData]);
+    res.status(201).json({post:{id:rows[0].id, text:body, author:req.member.name, authorId:req.member.id, avatarVersion:req.member.avatar_updated_at ? new Date(req.member.avatar_updated_at).getTime() : null, hasImage:!!imageData, date:rows[0].created_at, comments:[]}});
   } catch(err){next(err);}
 });
 

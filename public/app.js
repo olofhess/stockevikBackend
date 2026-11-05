@@ -5,6 +5,7 @@ const $ = id => document.getElementById(id);
 let currentMember = null;
 let posts = [];
 let members = [];
+let pendingPostPhoto = null; // compressed base64, held only until publication
 
 function avatar(name, id, version, small=false) {
   const holder = element('span', small ? 'avatar avatar-small' : 'avatar');
@@ -91,6 +92,19 @@ function renderPosts() {
     card.append(header);
     const postText = element('div','posttext',p.text || '');
     card.append(postText);
+    if (p.hasImage) {
+      const link = element('a','post-photo-link');
+      link.href = '/api/posts/' + encodeURIComponent(p.id) + '/image';
+      link.target = '_blank'; link.rel = 'noopener noreferrer';
+      link.title = 'Visa bilden större';
+      link.setAttribute('aria-label','Visa inläggets bild större');
+      const img = document.createElement('img');
+      img.className = 'post-photo';
+      img.src = link.href;
+      img.alt = 'Bild till inlägg av ' + (p.author || 'medlem');
+      img.loading = 'lazy';
+      link.append(img); card.append(link);
+    }
     // The button is just a convenience. The server independently enforces ownership.
     if (currentMember && String(p.authorId) === String(currentMember.id)) {
       const editActions = element('div','actions');
@@ -202,13 +216,73 @@ async function loadPosts() {
     $('feedStatus').textContent = '';
   } catch(e) { $('feedStatus').textContent = e.message; }
 }
+// A single photograph per post. Canvas resizes and strips metadata before upload.
+function clearPostPhoto() {
+  pendingPostPhoto = null;
+  $('postPhotoFile').value = '';
+  $('postPhotoPreview').replaceChildren();
+  $('postPhotoPreview').classList.add('hide');
+  $('postPhotoRemove').classList.add('hide');
+  $('postPhotoStatus').textContent = '';
+}
+$('postPhotoPick').onclick = () => $('postPhotoFile').click();
+$('postPhotoRemove').onclick = clearPostPhoto;
+$('postPhotoFile').onchange = async () => {
+  const file = $('postPhotoFile').files?.[0];
+  if (!file) return;
+  pendingPostPhoto = null;
+  $('postPhotoPreview').replaceChildren();
+  $('postPhotoPreview').classList.add('hide');
+  $('postPhotoRemove').classList.add('hide');
+  const status = $('postPhotoStatus');
+  const pick = $('postPhotoPick');
+  pick.disabled = true;
+  status.textContent = 'Förbereder bilden …';
+  let url;
+  try {
+    if (!file.type.startsWith('image/') || file.size > 15 * 1024 * 1024) {
+      throw new Error('Välj ett fotografi på högst 15 MB.');
+    }
+    url = URL.createObjectURL(file);
+    const img = new Image();
+    await new Promise((resolve, reject) => {
+      img.onload = resolve;
+      img.onerror = () => reject(new Error('Bilden kunde inte öppnas.'));
+      img.src = url;
+    });
+    const factor = Math.min(1, 1200 / Math.max(img.naturalWidth,img.naturalHeight));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(img.naturalWidth * factor));
+    canvas.height = Math.max(1, Math.round(img.naturalHeight * factor));
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Bilden kunde inte bearbetas.');
+    ctx.drawImage(img,0,0,canvas.width,canvas.height);
+    let dataURL;
+    for (const quality of [0.78,0.65,0.52,0.40]) {
+      dataURL = canvas.toDataURL('image/jpeg',quality);
+      if (dataURL.length < 395000) break;
+    }
+    if (!dataURL.startsWith('data:image/jpeg;base64,') || dataURL.length >= 395000) {
+      throw new Error('Fotografiet blev för stort. Välj en annan bild.');
+    }
+    pendingPostPhoto = dataURL.split(',')[1];
+    const preview = document.createElement('img');
+    preview.src = dataURL; preview.alt = 'Förhandsvisning av bilden';
+    $('postPhotoPreview').append(preview);
+    $('postPhotoPreview').classList.remove('hide');
+    $('postPhotoRemove').classList.remove('hide');
+    status.textContent = 'Bilden är klar att publiceras.';
+  } catch(err) { status.textContent = err.message; }
+  finally { if (url) URL.revokeObjectURL(url); pick.disabled = false; $('postPhotoFile').value = ''; }
+};
 $('postBtn').onclick = async () => {
   const text = $('postText').value.trim();
   if (!text) { $('postText').focus(); return; }
   const button = $('postBtn'); button.disabled = true;
   try {
-    await api('/posts','POST',{text});
+    await api('/posts','POST',{text, ...(pendingPostPhoto ? {jpegBase64:pendingPostPhoto} : {})});
     $('postText').value = '';
+    clearPostPhoto();
     await loadPosts();
   } catch(e) { alert(e.message); } finally { button.disabled = false; }
 };
