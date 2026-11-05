@@ -76,10 +76,30 @@ function renderPosts() {
     // The button is just a convenience. The server independently enforces ownership.
     if (currentMember && String(p.authorId) === String(currentMember.id)) {
       const editActions = element('div','actions');
-      const editButton = element('button','btn subtle','Redigera');
+      const editButton = element('button','linkbtn','✏️');
+      editButton.title = 'Redigera inlägg';
+      editButton.setAttribute('aria-label','Redigera mitt inlägg');
       editButton.type = 'button';
-      editActions.append(editButton);
+      const deleteButton = element('button','linkbtn','🗑️');
+      deleteButton.type = 'button';
+      deleteButton.title = 'Ta bort inlägg';
+      deleteButton.setAttribute('aria-label','Ta bort mitt inlägg');
+      deleteButton.style.marginLeft = '16px';
+      editActions.append(editButton, deleteButton);
       card.append(editActions);
+      deleteButton.onclick = async () => {
+        if (!confirm('Ta bort ditt inlägg och alla dess kommentarer? Detta går inte att ångra.')) return;
+        deleteButton.disabled = true;
+        editButton.disabled = true;
+        try {
+          await api('/posts/' + p.id, 'DELETE');
+          await loadPosts();
+        } catch (err) {
+          alert(err.message);
+          deleteButton.disabled = false;
+          editButton.disabled = false;
+        }
+      };
       editButton.onclick = () => {
         if (card.querySelector('.posteditform')) return;
         const form = element('form','posteditform');

@@ -31,7 +31,7 @@ app.use((req, res, next) => {
     res.set('Access-Control-Allow-Credentials', 'true');
     res.set('Vary', 'Origin');
     res.set('Access-Control-Allow-Headers', 'Content-Type');
-    res.set('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
+    res.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   }
   if (req.method === 'OPTIONS') return origin && origin === allowedOrigin ? res.sendStatus(204) : res.sendStatus(403);
   // Protect cookie-authenticated writes from cross-site requests.
@@ -221,6 +221,25 @@ app.put('/api/posts/:id', authenticate, writeLimiter, async (req, res, next) => 
   } catch (err) { next(err); }
 });
 
+// Deleting a post also deletes its comments (comments.post_id ON DELETE CASCADE).
+// Only the author can delete the post, verified against the logged-in member on the server.
+app.delete('/api/posts/:id', authenticate, writeLimiter, async (req, res, next) => {
+  try {
+    if (!/^\d+$/.test(req.params.id)) return res.status(400).json({error:'Ogiltigt inläggs-ID.'});
+    const deleted = await pool.query(
+      'DELETE FROM posts WHERE id=$1 AND member_id=$2 RETURNING id',
+      [req.params.id, req.member.id]
+    );
+    if (!deleted.rowCount) {
+      const found = await pool.query('SELECT 1 FROM posts WHERE id=$1', [req.params.id]);
+      return res.status(found.rowCount ? 403 : 404).json({
+        error: found.rowCount ? 'Du kan bara ta bort dina egna inlägg.' : 'Inlägget saknas.'
+      });
+    }
+    res.json({ok:true});
+  } catch(err) { next(err); }
+});
+
 app.post('/api/posts/:id/comments', authenticate, writeLimiter, async (req, res, next) => {
   try {
     if (!/^\d+$/.test(req.params.id)) return res.status(400).json({error:'Ogiltigt inlÃ¤ggs-ID.'});
@@ -249,8 +268,8 @@ app.post('/api/register', registrationLimiter, async (req,res,next) => {
     const house = safeText(req.body?.house,100);
     const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
     const password = typeof req.body?.password === 'string' ? req.body.password : '';
-    if (!name || !house || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 180 || password.length < 12 || password.length > 200) {
-      return res.status(400).json({error:'Ange namn, fastighet, giltig e-post och lÃ¶senord med minst 12 tecken.'});
+    if (!name || !house || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 180 || password.length < 8 || password.length > 200) {
+      return res.status(400).json({error:'Ange namn, fastighet, giltig e-post och lÃ¶senord med minst 8 tecken.'});
     }
     // A server-generated internal username is never used as a credential.
     const username = 'medlem_' + randomBytes(12).toString('hex');
