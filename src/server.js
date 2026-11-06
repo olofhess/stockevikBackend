@@ -406,6 +406,57 @@ function requireAdmin(req,res,next) {
   if (req.member.role !== 'admin') return res.status(403).json({error:'Endast administratÃ¶ren har tillgÃ¥ng.'});
   next();
 }
+// Only administrators may inspect contact details or change another member.
+// No permanent deletion: posts and comments remain attributable to the member.
+app.get('/api/admin/members', authenticate, requireAdmin, async (_req,res,next) => {
+  try {
+    const {rows} = await pool.query(`SELECT id,name,house,username,email,status,role
+      FROM members WHERE status <> 'pending' ORDER BY lower(name),id`);
+    res.json({members:rows});
+  } catch(err) { next(err); }
+});
+
+app.put('/api/admin/members/:id', authenticate, requireAdmin, writeLimiter, async (req,res,next) => {
+  try {
+    if (!/^\d+$/.test(req.params.id)) return res.status(400).json({error:'Ogiltigt medlems-ID.'});
+    const name = safeText(req.body?.name,100);
+    const house = safeText(req.body?.house,100);
+    const username = safeText(req.body?.username,50);
+    const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+    const status = req.body?.status;
+    if (!name || !house || !username || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ||
+        email.length > 180 || !['active','inactive'].includes(status)) {
+      return res.status(400).json({error:'Kontrollera namn, fastighet, användarnamn, e-postadress och status.'});
+    }
+    if (/[\s]/.test(username) || username.length < 2) {
+      return res.status(400).json({error:'Användarnamnet ska vara 2–50 tecken utan mellanslag.'});
+    }
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const {rows:original} = await client.query(`SELECT id,role,status FROM members
+        WHERE id=$1 AND status <> 'pending' FOR UPDATE`, [req.params.id]);
+      if (!original.length) { await client.query('ROLLBACK'); return res.status(404).json({error:'Medlemmen hittades inte.'}); }
+      // Administrator accounts must never be disabled via this editor.
+      if (original[0].role === 'admin' && status !== 'active') {
+        await client.query('ROLLBACK');
+        return res.status(403).json({error:'Administratörskonton kan inte inaktiveras här.'});
+      }
+      const {rows} = await client.query(`UPDATE members
+        SET name=$2,house=$3,username=$4,email=$5,status=$6 WHERE id=$1
+        RETURNING id,name,house,username,email,status,role`,
+        [req.params.id,name,house,username,email,status]);
+      if (status === 'inactive') await client.query('DELETE FROM sessions WHERE member_id=$1',[req.params.id]);
+      await client.query('COMMIT');
+      res.json({member:rows[0]});
+    } catch (err) {
+      await client.query('ROLLBACK');
+      if (err.code === '23505') return res.status(409).json({error:'E-postadressen eller användarnamnet används redan.'});
+      throw err;
+    } finally { client.release(); }
+  } catch(err) { next(err); }
+});
+
 app.get('/api/admin/applications', authenticate, requireAdmin, async (_req,res,next) => {
   try {
     const {rows} = await pool.query(`SELECT id,name,house,email,joined_at FROM members

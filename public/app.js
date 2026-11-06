@@ -69,7 +69,7 @@ function view(tab) {
     $(t+'View').classList.toggle('hide',t!==tab);
     $(t+'Tab').classList.toggle('active',t===tab);
   }
-  if (tab === 'members') loadMembers();
+  if (tab === 'members') { loadMembers(); loadAdminMembers(); }
   if (tab === 'profile') renderProfile();
   if (tab === 'feed') loadPosts();
   if (tab === 'admin') loadApplications();
@@ -297,6 +297,84 @@ async function loadMembers() {
       host.append(row);
     }
   } catch(e) { host.replaceChildren(element('tr','',e.message)); }
+}
+
+// The member directory remains public only to signed-in members.
+// Editing and contact details are loaded separately for administrators.
+async function loadAdminMembers() {
+  const admin = currentMember?.role === 'admin';
+  $('memberAdmin').classList.toggle('hide', !admin);
+  if (!admin) return;
+  const host = $('adminMembersList');
+  host.replaceChildren();
+  $('adminMembersStatus').textContent = 'Hämtar medlemsuppgifter …';
+  try {
+    const result = await api('/admin/members');
+    const all = result.members || [];
+    $('adminMembersStatus').textContent = all.length ? '' : 'Inga medlemmar att hantera.';
+    for (const m of all) {
+      const card = element('div','member-admin-card');
+      const header = element('div','member-admin-header');
+      header.append(element('b','',m.name+' · '+(m.status === 'active' ? 'Aktiv' : 'Inaktiv')));
+      const edit = element('button','btn subtle','✏️ Redigera'); edit.type='button';
+      header.append(edit);card.append(header);
+      const form = element('form','member-admin-form hide');
+      const fields = {};
+      function field(label,key,value,type='text') {
+        const div = element('div','field');
+        const id = 'admin-member-' + m.id + '-' + key;
+        const l = element('label','',label); l.htmlFor=id;
+        const input = document.createElement('input');
+        input.id=id; input.type=type; input.value=value ?? '';
+        input.required=true; input.maxLength=key==='email'?180:key==='username'?50:100;
+        div.append(l,input);form.append(div);fields[key]=input;
+      }
+      field('Namn','name',m.name);
+      field('Fastighet / hus','house',m.house);
+      field('Användarnamn','username',m.username);
+      field('E-postadress (inloggning)','email',m.email,'email');
+      const statusWrap=element('div','field');
+      const statusLabel=element('label','','Medlemsstatus');
+      const statusSelect=document.createElement('select');
+      for (const [value,label] of [['active','Aktiv'],['inactive','Inaktiv']]) {
+        const option=document.createElement('option');option.value=value;option.textContent=label;
+        statusSelect.append(option);
+      }
+      statusSelect.value=m.status;
+      if (m.role === 'admin') {
+        statusSelect.disabled=true;
+        statusLabel.textContent='Medlemsstatus (administratör – kan inte inaktiveras)';
+      }
+      statusWrap.append(statusLabel,statusSelect);form.append(statusWrap);
+      const actions=element('div','actions');
+      const cancel=element('button','btn subtle','Avbryt');cancel.type='button';
+      const save=element('button','btn','Spara');save.type='submit';
+      const feedback=element('p','small');feedback.setAttribute('role','status');
+      actions.append(cancel,save);form.append(actions,feedback);
+      edit.onclick=()=>{form.classList.toggle('hide');};
+      cancel.onclick=()=>form.classList.add('hide');
+      form.onsubmit=async event=>{
+        event.preventDefault();
+        if (statusSelect.value === 'inactive' && m.status !== 'inactive' &&
+            !confirm('Inaktivera '+m.name+'? Medlemmen loggas ut och kan inte logga in förrän kontot återaktiveras.')) return;
+        save.disabled=true;feedback.textContent='Sparar …';
+        try {
+          await api('/admin/members/'+m.id,'PUT',{
+            name:fields.name.value,house:fields.house.value,
+            username:fields.username.value,email:fields.email.value,
+            status:statusSelect.value
+          });
+          await loadAdminMembers();
+          await loadMembers();
+          if (String(m.id) === String(currentMember.id)) {
+            const {member} = await api('/me');
+            currentMember=member;showSession();
+          }
+        } catch(err) { feedback.textContent=err.message;save.disabled=false; }
+      };
+      card.append(form);host.append(card);
+    }
+  } catch(err) { $('adminMembersStatus').textContent=err.message; }
 }
 
 $('registerToggle').onclick=()=>{

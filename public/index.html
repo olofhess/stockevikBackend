@@ -64,11 +64,17 @@ main,.sidebar,.card{min-width:0}
 .post-photo-preview img{display:block;max-width:100%;max-height:320px;border-radius:10px;margin:12px 0;object-fit:contain}
 .photo-actions{justify-content:flex-start;flex-wrap:wrap}.photo-actions #postBtn{margin-left:auto}
 
+/* Member-editor rows */
+.member-admin-card{padding:14px;border:1px solid var(--line);border-radius:10px;margin:12px 0;background:#f8fbfb}
+.member-admin-header{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.member-admin-form{margin-top:12px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.member-admin-form .field{margin:0}.member-admin-form .actions{grid-column:1/-1}
+@media(max-width:650px){.member-admin-form{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
 <header><div class="top"><div class="brand" aria-hidden="true">⚓</div><div><div class="name">Det händer i Stockevik</div><div class="tag">Vår egen mötesplats · utan annonser</div></div><div class="pill">Vår mötesplats</div><div id="account" class="account hide"><span id="accountName" class="accountname"></span><button id="logoutBtn" class="btn subtle" type="button">Logga ut</button></div></div></header>
-<section id="loginView" class="loginwall"><div class="card"><div class="eyebrow">Inloggning · version 1.1</div><h2 style="font:28px Georgia,serif;margin:7px 0 12px">Välkommen tillbaka!</h2><p>Logga in med din e-postadress och ditt lösenord.</p><form id="loginForm"><label for="loginEmail">E-postadress</label><input id="loginEmail" type="email" autocomplete="username" required placeholder="din@epost.se"><div class="field"><label for="loginPassword">Lösenord</label><input id="loginPassword" type="password" autocomplete="current-password" required></div><button class="btn" type="submit">Logga in</button><p class="small" id="loginError" role="alert"></p></form><button id="registerToggle" class="linkbtn" type="button">Ansök om medlemskap</button><div class="note">Inlägg och kommentarer delas mellan godkända medlemmar. Kontakta administratören om din ansökan väntar på godkännande.</div></div></section>
+<section id="loginView" class="loginwall"><div class="card"><div class="eyebrow">Inloggning · version 1.2</div><h2 style="font:28px Georgia,serif;margin:7px 0 12px">Välkommen tillbaka!</h2><p>Logga in med din e-postadress och ditt lösenord.</p><form id="loginForm"><label for="loginEmail">E-postadress</label><input id="loginEmail" type="email" autocomplete="username" required placeholder="din@epost.se"><div class="field"><label for="loginPassword">Lösenord</label><input id="loginPassword" type="password" autocomplete="current-password" required></div><button class="btn" type="submit">Logga in</button><p class="small" id="loginError" role="alert"></p></form><button id="registerToggle" class="linkbtn" type="button">Ansök om medlemskap</button><div class="note">Inlägg och kommentarer delas mellan godkända medlemmar. Kontakta administratören om din ansökan väntar på godkännande.</div></div></section>
 <section id="registrationView" class="loginwall hide"><div class="card"><h2>Ansök om medlemskap</h2><p class="small">Endast boende som godkänns av administratören får tillgång till anslagstavlan. Ingen automatisk e-postbekräftelse skickas i denna testversion.</p><form id="registrationForm">
 <div class="field"><label for="regName">Namn</label><input id="regName" required maxlength="100" autocomplete="name"></div>
 <div class="field"><label for="regHouse">Fastighet / hus</label><input id="regHouse" required maxlength="100"></div>
@@ -108,11 +114,12 @@ main,.sidebar,.card{min-width:0}
   <div id="adminView" class="hide"><section class="card"><h2>Medlemsansökningar</h2><p class="small">Godkänn bara personer som du känner tillhör Stockevik. E-postadresserna visas enbart för administratören.</p><div id="applicationsList"></div><p id="adminStatus" role="status" class="small"></p></section></div>
   <div id="membersView" class="hide">
    <section class="card"><h2>Medlemmar</h2><p class="small">Bara namn, hus och användarnamn visas för inloggade medlemmar.</p><div style="overflow-x:auto"><table class="members-table"><thead><tr><th>Namn</th><th>Hus</th><th>Användarnamn</th><th>Status</th></tr></thead><tbody id="membersList"></tbody></table></div></section>
+    <section id="memberAdmin" class="card hide"><h2>Administrera medlemmar</h2><p class="small">Endast administratören kan redigera medlemmar. Inaktivering stänger av inloggningen men behåller inlägg och kommentarer.</p><div id="adminMembersList"></div><p id="adminMembersStatus" class="small" role="status"></p></section>
   </div>
  </main>
  <aside class="sidebar"><section class="card"><h3>Om vår mötesplats</h3><p class="info">Ett privat samtalsforum för oss i Stockevik.</p><p class="info">Här kan vi dela nyheter, tips, frågor och små händelser från vår by.</p></section><section class="card"><h3>Bilder från Stockevik</h3><div class="boxpic">📷<br>Här kommer våra bilder</div><p class="notice">Bildgalleri tillkommer i nästa version.</p></section><section class="card"><h3>Enkelhet och integritet</h3><p class="info">Ingen reklam och ingen profilering. Medlemsuppgifter ska förvaltas av föreningen.</p></section></aside>
 </div>
-<footer>Det händer i Stockevik · Version 1.1 · Bilder i inlägg</footer>
-<script src="/app.js?v=110" defer></script>
+<footer>Det händer i Stockevik · Version 1.2 · Medlemsadministration</footer>
+<script src="/app.js?v=120" defer></script>
 </body>
 </html>
