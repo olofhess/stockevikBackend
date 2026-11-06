@@ -317,7 +317,60 @@ async function loadAdminMembers() {
       const header = element('div','member-admin-header');
       header.append(element('b','',m.name+' · '+(m.status === 'active' ? 'Aktiv' : 'Inaktiv')));
       const edit = element('button','btn subtle','✏️ Redigera'); edit.type='button';
-      header.append(edit);card.append(header);
+      header.append(edit);
+      // Password reset is a separate action; regular members never see it.
+      // Admin accounts change their password using 'Min profil'.
+      let resetForm = null;
+      if (m.role !== 'admin') {
+        const resetButton = element('button','btn subtle','Återställ lösenord');
+        resetButton.type = 'button';
+        header.append(resetButton);
+        resetForm = element('form','member-admin-form hide');
+        const resetTitle=element('p','small','Ange ett nytt tillfälligt lösenord (minst 8 tecken). Medlemmen behöver få det direkt av dig.');
+        const resetField=element('div','field');
+        const resetLabel=element('label','','Nytt lösenord');
+        const resetInput=document.createElement('input');
+        resetInput.type='password'; resetInput.minLength=8; resetInput.maxLength=200;
+        resetInput.required=true; resetInput.autocomplete='new-password';
+        resetInput.id='reset-password-'+m.id; resetLabel.htmlFor=resetInput.id;
+        resetField.append(resetLabel,resetInput);
+        const confirmField=element('div','field');
+        const confirmLabel=element('label','','Upprepa lösenordet');
+        const confirmInput=document.createElement('input');
+        confirmInput.type='password'; confirmInput.minLength=8; confirmInput.maxLength=200;
+        confirmInput.required=true; confirmInput.autocomplete='new-password';
+        confirmInput.id='reset-confirm-'+m.id; confirmLabel.htmlFor=confirmInput.id;
+        confirmField.append(confirmLabel,confirmInput);
+        const resetActions=element('div','actions');
+        const resetCancel=element('button','btn subtle','Avbryt'); resetCancel.type='button';
+        const resetSave=element('button','btn','Spara nytt lösenord'); resetSave.type='submit';
+        const resetFeedback=element('p','small'); resetFeedback.setAttribute('role','status');
+        resetActions.append(resetCancel,resetSave);
+        resetForm.append(resetTitle,resetField,confirmField,resetActions,resetFeedback);
+        resetButton.onclick=()=>{
+          const showing=resetForm.classList.contains('hide');
+          resetForm.classList.toggle('hide',!showing);
+          if(showing) resetInput.focus();
+          else {resetForm.reset();resetFeedback.textContent='';}
+        };
+        resetCancel.onclick=()=>{resetForm.reset();resetFeedback.textContent='';resetForm.classList.add('hide');};
+        resetForm.onsubmit=async event=>{
+          event.preventDefault();
+          if (resetInput.value!==confirmInput.value) {
+            resetFeedback.textContent='Lösenorden är inte lika.';return;
+          }
+          if (!confirm('Återställ lösenordet för '+m.name+'? Medlemmen loggas ut från andra enheter.')) return;
+          resetSave.disabled=true;
+          resetFeedback.textContent='Sparar nytt lösenord …';
+          try {
+            await api('/admin/members/'+m.id+'/reset-password','POST',{password:resetInput.value});
+            resetForm.reset();
+            resetFeedback.textContent='Lösenordet är ändrat. Meddela medlemmen det nya lösenordet privat.';
+          } catch(err) {resetFeedback.textContent=err.message;}
+          finally {resetSave.disabled=false;}
+        };
+      }
+      card.append(header);
       const form = element('form','member-admin-form hide');
       const fields = {};
       function field(label,key,value,type='text') {
@@ -372,7 +425,9 @@ async function loadAdminMembers() {
           }
         } catch(err) { feedback.textContent=err.message;save.disabled=false; }
       };
-      card.append(form);host.append(card);
+      card.append(form);
+      if (resetForm) card.append(resetForm);
+      host.append(card);
     }
   } catch(err) { $('adminMembersStatus').textContent=err.message; }
 }

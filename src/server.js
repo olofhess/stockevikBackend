@@ -457,6 +457,40 @@ app.put('/api/admin/members/:id', authenticate, requireAdmin, writeLimiter, asyn
   } catch(err) { next(err); }
 });
 
+// Administrator can set a new password for an existing non-admin member.
+// The new secret is never returned or logged. Existing sessions are invalidated.
+app.post('/api/admin/members/:id/reset-password', authenticate, requireAdmin, writeLimiter, async (req,res,next) => {
+  try {
+    if (!/^\d+$/.test(req.params.id)) return res.status(400).json({error:'Ogiltigt medlems-ID.'});
+    const password = req.body?.password;
+    if (typeof password !== 'string' || password.length < 8 || password.length > 200) {
+      return res.status(400).json({error:'Det nya lösenordet måste innehålla 8–200 tecken.'});
+    }
+    const passwordHash = await bcrypt.hash(password, 12);
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const {rows} = await client.query(`SELECT id,role,status FROM members
+        WHERE id=$1 FOR UPDATE`, [req.params.id]);
+      if (!rows.length || rows[0].status === 'pending') {
+        await client.query('ROLLBACK');
+        return res.status(404).json({error:'Medlemmen hittades inte.'});
+      }
+      if (rows[0].role === 'admin') {
+        await client.query('ROLLBACK');
+        return res.status(403).json({error:'Administratörer byter lösenord under Min profil.'});
+      }
+      await client.query('UPDATE members SET password_hash=$1 WHERE id=$2', [passwordHash, req.params.id]);
+      await client.query('DELETE FROM sessions WHERE member_id=$1', [req.params.id]);
+      await client.query('COMMIT');
+      res.json({ok:true});
+    } catch(err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {client.release();}
+  } catch(err) {next(err);}
+});
+
 app.get('/api/admin/applications', authenticate, requireAdmin, async (_req,res,next) => {
   try {
     const {rows} = await pool.query(`SELECT id,name,house,email,joined_at FROM members
