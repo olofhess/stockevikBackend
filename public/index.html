@@ -70,11 +70,60 @@ main,.sidebar,.card{min-width:0}
 .member-admin-form{margin-top:12px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 .member-admin-form .field{margin:0}.member-admin-form .actions{grid-column:1/-1}
 @media(max-width:650px){.member-admin-form{grid-template-columns:1fr}}
+
+/* Stockevik 1.2.2: Compact iPhone layout; functionality unchanged. */
+@media (max-width: 650px) {
+  .top { padding: 8px 12px; gap: 8px; align-items: center; }
+  .brand { width: 36px; height: 36px; border-radius: 9px; font-size: 20px; flex-shrink: 0; }
+  .name { font-size: clamp(18px, 5.3vw, 23px); line-height: 1.12; }
+  .tag { font-size: 11px; margin-top: 1px; }
+  .account { width: 100%; margin: 0; justify-content: flex-end; gap: 8px; }
+  .accountname { font-size: 12px; }
+  .account .btn { min-height: 44px; padding: 6px 12px; }
+  .wrap { margin: 8px auto; padding: 0 8px; }
+  .card { padding: 12px; margin-bottom: 9px; border-radius: 10px; }
+  .eyebrow { font-size: 10px; letter-spacing: .07em; }
+  .welcome { font-size: 19px; margin: 1px 0 3px; }
+  h2 { font-size: 17px; margin-bottom: 8px; }
+  h3 { margin-bottom: 5px; }
+  .small, .notice { line-height: 1.4; }
+  .tabbar { gap: 6px; margin-bottom: 9px; }
+  .tabbar button { min-height: 44px; padding: 7px 4px; font-size: 13px; border-radius: 8px; }
+  textarea { min-height: 76px; padding: 9px 10px; }
+  input, select { padding: 8px 10px; }
+  .field { margin: 8px 0; }
+  .actions { margin-top: 8px; gap: 7px; }
+  .actions .btn, .btn { padding: 8px 12px; }
+  .postheader { gap: 8px; }
+  .avatar { width: 36px; height: 36px; font-size: 15px; }
+  .avatar-small { width: 27px; height: 27px; font-size: 12px; }
+  .posttext { margin: 10px 0; line-height: 1.45; }
+  .postfooter { padding-top: 8px; gap: 10px; }
+  .comment { margin-top: 8px; padding: 8px 10px; }
+  .comment p { margin: 2px 0; }
+  .commentform { margin-top: 8px; gap: 6px; }
+  .sidebar .card { margin-bottom: 9px; }
+  .info { margin-bottom: 8px; }
+  .boxpic { height: 88px; }
+  .members-table th, .members-table td { padding: 6px 4px; }
+  .post-photo { max-height: 360px; }
+  .post-photo-preview img { max-height: 220px; }
+  .profile-photo { margin: 8px 0; }
+  .profile-photo .avatar { width: 84px; height: 84px; font-size: 34px; }
+  .dialog { padding: 14px; }
+  footer { padding: 8px 12px 20px; }
+}
+@media (max-width: 390px) {
+  .name { font-size: 18px; }
+  .tabbar button { font-size: 12px; }
+  .accountname { font-size: 11px; }
+  .members-table { font-size: 11px; }
+}
 </style>
 </head>
 <body>
 <header><div class="top"><div class="brand" aria-hidden="true">⚓</div><div><div class="name">Det händer i Stockevik</div><div class="tag">Vår egen mötesplats · utan annonser</div></div><div class="pill">Vår mötesplats</div><div id="account" class="account hide"><span id="accountName" class="accountname"></span><button id="logoutBtn" class="btn subtle" type="button">Logga ut</button></div></div></header>
-<section id="loginView" class="loginwall"><div class="card"><div class="eyebrow">Inloggning · version 1.2.1</div><h2 style="font:28px Georgia,serif;margin:7px 0 12px">Välkommen tillbaka!</h2><p>Logga in med din e-postadress och ditt lösenord.</p><form id="loginForm"><label for="loginEmail">E-postadress</label><input id="loginEmail" type="email" autocomplete="username" required placeholder="din@epost.se"><div class="field"><label for="loginPassword">Lösenord</label><input id="loginPassword" type="password" autocomplete="current-password" required></div><button class="btn" type="submit">Logga in</button><p class="small" id="loginError" role="alert"></p></form><button id="registerToggle" class="linkbtn" type="button">Ansök om medlemskap</button><div class="note">Inlägg och kommentarer delas mellan godkända medlemmar. Kontakta administratören om din ansökan väntar på godkännande.</div></div></section>
+<section id="loginView" class="loginwall"><div class="card"><div class="eyebrow">Inloggning · version 1.2.2.2</div><h2 style="font:28px Georgia,serif;margin:7px 0 12px">Välkommen tillbaka!</h2><p>Logga in med din e-postadress och ditt lösenord.</p><form id="loginForm"><label for="loginEmail">E-postadress</label><input id="loginEmail" type="email" autocomplete="username" required placeholder="din@epost.se"><div class="field"><label for="loginPassword">Lösenord</label><input id="loginPassword" type="password" autocomplete="current-password" required></div><button class="btn" type="submit">Logga in</button><p class="small" id="loginError" role="alert"></p></form><button id="registerToggle" class="linkbtn" type="button">Ansök om medlemskap</button><div class="note">Inlägg och kommentarer delas mellan godkända medlemmar. Kontakta administratören om din ansökan väntar på godkännande.</div></div></section>
 <section id="registrationView" class="loginwall hide"><div class="card"><h2>Ansök om medlemskap</h2><p class="small">Endast boende som godkänns av administratören får tillgång till anslagstavlan. Ingen automatisk e-postbekräftelse skickas i denna testversion.</p><form id="registrationForm">
 <div class="field"><label for="regName">Namn</label><input id="regName" required maxlength="100" autocomplete="name"></div>
 <div class="field"><label for="regHouse">Fastighet / hus</label><input id="regHouse" required maxlength="100"></div>
@@ -119,7 +168,7 @@ main,.sidebar,.card{min-width:0}
  </main>
  <aside class="sidebar"><section class="card"><h3>Om vår mötesplats</h3><p class="info">Ett privat samtalsforum för oss i Stockevik.</p><p class="info">Här kan vi dela nyheter, tips, frågor och små händelser från vår by.</p></section><section class="card"><h3>Bilder från Stockevik</h3><div class="boxpic">📷<br>Här kommer våra bilder</div><p class="notice">Bildgalleri tillkommer i nästa version.</p></section><section class="card"><h3>Enkelhet och integritet</h3><p class="info">Ingen reklam och ingen profilering. Medlemsuppgifter ska förvaltas av föreningen.</p></section></aside>
 </div>
-<footer>Det händer i Stockevik · Version 1.2.1 · Lösenordsåterställning</footer>
+<footer>Det händer i Stockevik · Version 1.2.2 · Lösenordsåterställning</footer>
 <script src="/app.js?v=121" defer></script>
 </body>
 </html>
