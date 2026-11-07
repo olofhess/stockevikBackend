@@ -1,0 +1,15 @@
+{
+  "name": "Föreningsapp (test)",
+  "short_name": "Föreningsapp",
+  "description": "Testinstallation för föreningar",
+  "lang": "sv-SE",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f6f8f7",
+  "theme_color": "#24697b",
+  "icons": [
+    {"src":"/icons/stockevik-192.png","sizes":"192x192","type":"image/png","purpose":"any maskable"},
+    {"src":"/icons/stockevik-512.png","sizes":"512x512","type":"image/png","purpose":"any maskable"}
+  ]
+}

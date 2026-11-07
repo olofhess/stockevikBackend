@@ -136,6 +136,44 @@ async function initialize() {
     ALTER TABLE members ADD CONSTRAINT members_status_check CHECK (status IN ('active','inactive','pending'));`);
 }
 
+// Bootstrap the very first administrator of a NEW, EMPTY association database.
+// Credentials are provided only through the test web service's Render environment.
+// Once an account exists, this function cannot create or modify anyone.
+async function bootstrapFirstAdmin() {
+  const email = (process.env.FIRST_ADMIN_EMAIL || '').trim().toLowerCase();
+  const name = (process.env.FIRST_ADMIN_NAME || '').trim();
+  const password = process.env.FIRST_ADMIN_PASSWORD || '';
+  const house = (process.env.FIRST_ADMIN_HOUSE || '').trim() || 'Föreningens administratör';
+  if (!email && !name && !password) return;
+  if (!email || !name || !password ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ||
+      email.length > 180 || name.length > 100 || house.length > 100 ||
+      password.length < 12 || password.length > 200) {
+    throw new Error('FIRST_ADMIN_EMAIL, FIRST_ADMIN_NAME och FIRST_ADMIN_PASSWORD (minst 12 tecken) måste anges korrekt.');
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // Serialise concurrent startup attempts for this database.
+    await client.query('SELECT pg_advisory_xact_lock(745169)');
+    const {rows} = await client.query('SELECT EXISTS(SELECT 1 FROM members) AS any_member');
+    if (rows[0].any_member) {
+      console.log('First administrator bootstrap skipped: members already exist.');
+      await client.query('COMMIT');
+      return;
+    }
+    const hash = await bcrypt.hash(password, 12);
+    await client.query(`INSERT INTO members(name, house, username, email, password_hash, status, role)
+      VALUES($1,$2,$3,$4,$5,'active','admin')`,
+      [name, house, 'admin', email, hash]);
+    await client.query('COMMIT');
+    console.log('First administrator account created for empty association database.');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally { client.release(); }
+}
+
 async function seedOnlyForDemo() {
   if (process.env.SEED_DEMO !== 'true') return;
   const credentials = [
@@ -565,6 +603,7 @@ app.use((err,req,res,next)=>{
 
 try {
   await initialize();
+  await bootstrapFirstAdmin();
   await seedOnlyForDemo();
   await resetKallePasswordOnce();
   // Explicit administrator assignment: set ADMIN_EMAIL to an existing account in Render.
