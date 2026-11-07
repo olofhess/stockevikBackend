@@ -618,6 +618,10 @@ try {
     const result = await pool.query(`UPDATE members SET role='admin' WHERE email=$1 AND status='active' RETURNING id`,[adminEmail]);
     if (!result.rowCount) console.warn('ADMIN_EMAIL does not match an active member.');
   }
+  const admins = await pool.query(
+  "SELECT name, email, status FROM members WHERE role='admin'"
+);
+console.log('Administratörer i testdatabasen:', admins.rows);
   const port=Number(process.env.PORT || 10000);
   app.listen(port,'0.0.0.0',()=>console.log(`Stockevik backend listening on ${port}`));
 } catch(err){console.error('Startup failed:',err);process.exit(1);}
