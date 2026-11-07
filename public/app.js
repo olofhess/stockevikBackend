@@ -5,6 +5,7 @@ const $ = id => document.getElementById(id);
 let currentMember = null;
 let posts = [];
 let members = [];
+let associationProfile = null;
 let pendingPostPhoto = null; // compressed base64, held only until publication
 
 function avatar(name, id, version, small=false) {
@@ -59,13 +60,14 @@ function showSession() {
   $('account').classList.toggle('hide', !signedIn);
   $('accountName').textContent = signedIn ? 'Inloggad som ' + currentMember.name : '';
   $('adminTab').classList.toggle('hide', !signedIn || currentMember.role !== 'admin');
+  $('settingsTab').classList.toggle('hide', !signedIn || currentMember.role !== 'admin');
   if (signedIn) { $('avatarRemove').classList.toggle('hide', !currentMember.avatarVersion); renderProfile(); }
   if (!signedIn) $('avatarStatus').textContent = '';
   if (signedIn) $('registrationView').classList.add('hide');
 }
 function view(tab) {
-  if (tab === 'admin' && currentMember?.role !== 'admin') tab='feed';
-  for (const t of ['feed','members','profile','admin']) {
+  if (['admin','settings'].includes(tab) && currentMember?.role !== 'admin') tab='feed';
+  for (const t of ['feed','members','profile','admin','settings']) {
     $(t+'View').classList.toggle('hide',t!==tab);
     $(t+'Tab').classList.toggle('active',t===tab);
   }
@@ -73,11 +75,13 @@ function view(tab) {
   if (tab === 'profile') renderProfile();
   if (tab === 'feed') loadPosts();
   if (tab === 'admin') loadApplications();
+  if (tab === 'settings') fillAssociationForm();
 }
 $('feedTab').onclick = () => view('feed');
 $('membersTab').onclick = () => view('members');
 $('adminTab').onclick = () => view('admin');
 $('profileTab').onclick = () => view('profile');
+$('settingsTab').onclick = () => view('settings');
 
 function renderPosts() {
   const host = $('posts'); host.replaceChildren();
@@ -519,6 +523,51 @@ $('logoutBtn').onclick = async () => {
   $('postText').value = '';
   showSession();
 };
+// Association-wide text is kept in the association's own database.
+function applyAssociation(association) {
+  associationProfile = association;
+  $('associationTitle').textContent = association.app_title;
+  $('associationTagline').textContent = association.tagline;
+  $('associationWelcome').textContent = association.welcome_title;
+  $('associationWelcomeText').textContent = association.welcome_text;
+  $('associationAbout').textContent = association.about_text;
+  $('associationId').textContent = association.association_id;
+  document.title = association.app_title + ' · Vår mötesplats';
+}
+function fillAssociationForm() {
+  if (!associationProfile) return;
+  const m = {
+    associationName:'association_name',associationAppTitle:'app_title',
+    associationTaglineEdit:'tagline',associationWelcomeEdit:'welcome_title',
+    associationWelcomeTextEdit:'welcome_text',associationAboutEdit:'about_text'
+  };
+  for (const [id,field] of Object.entries(m)) $(id).value = associationProfile[field] || '';
+}
+async function loadAssociation() {
+  try { const result = await api('/association'); applyAssociation(result.association); }
+  catch(error) { console.warn('Föreningsinställningar kan inte hämtas:', error.message); }
+}
+$('associationForm').onsubmit = async event => {
+  event.preventDefault();
+  const button = $('associationForm').querySelector('button[type="submit"]');
+  const status = $('associationStatus');
+  button.disabled = true; status.textContent = 'Sparar …';
+  try {
+    const result = await api('/admin/association','PUT',{
+      association_name:$('associationName').value,
+      app_title:$('associationAppTitle').value,
+      tagline:$('associationTaglineEdit').value,
+      welcome_title:$('associationWelcomeEdit').value,
+      welcome_text:$('associationWelcomeTextEdit').value,
+      about_text:$('associationAboutEdit').value
+    });
+    applyAssociation(result.association);
+    status.textContent = 'Föreningens texter är sparade.';
+  } catch(error) { status.textContent = error.message; }
+  finally { button.disabled = false; }
+};
+loadAssociation();
+
 (async function init() {
   // Avoid an initial /me request overwriting a successful manual login.
   const initialRequest = api('/me');

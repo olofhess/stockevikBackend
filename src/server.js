@@ -111,6 +111,24 @@ async function initialize() {
   `);
   await pool.query(`ALTER TABLE members ADD COLUMN IF NOT EXISTS avatar_data BYTEA;
     ALTER TABLE members ADD COLUMN IF NOT EXISTS avatar_updated_at TIMESTAMPTZ;`);
+  // One association profile per independent installation (future: one database per association).
+  await pool.query(`CREATE TABLE IF NOT EXISTS association_settings (
+    association_id TEXT PRIMARY KEY,
+    association_name TEXT NOT NULL,
+    app_title TEXT NOT NULL,
+    tagline TEXT NOT NULL,
+    welcome_title TEXT NOT NULL,
+    welcome_text TEXT NOT NULL,
+    about_text TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`);
+  await pool.query(`INSERT INTO association_settings
+    (association_id,association_name,app_title,tagline,welcome_title,welcome_text,about_text)
+    VALUES ('stockevik','Stockeviks samhällsförening','Det händer i Stockevik',
+    'Vår egen mötesplats · utan annonser','Välkommen till vår mötesplats!',
+    'Nyheter, bilder och samtal mellan grannar – utan annonser.',
+    'Ett privat samtalsforum för oss i Stockevik.')
+    ON CONFLICT (association_id) DO NOTHING`);
   // Each post can have one compressed JPEG, stored durably in PostgreSQL.
   await pool.query('ALTER TABLE posts ADD COLUMN IF NOT EXISTS image_data BYTEA;');
   // Safe migration from v0.6. Existing members, posts and comments are retained.
@@ -406,6 +424,33 @@ function requireAdmin(req,res,next) {
   if (req.member.role !== 'admin') return res.status(403).json({error:'Endast administratÃ¶ren har tillgÃ¥ng.'});
   next();
 }
+// Association profile. No access to member data, and only administrators may edit text.
+const associationId = 'stockevik'; // Installation identity; will become deployment configuration later.
+const associationFields = ['association_name','app_title','tagline','welcome_title','welcome_text','about_text'];
+app.get('/api/association', async (_req,res,next) => {
+  try {
+    const {rows} = await pool.query(`SELECT association_id,association_name,app_title,tagline,
+      welcome_title,welcome_text,about_text FROM association_settings WHERE association_id=$1`,[associationId]);
+    if (!rows.length) return res.status(503).json({error:'Föreningsprofilen saknas.'});
+    res.set('Cache-Control','no-store');
+    res.json({association:rows[0]});
+  } catch(err){next(err);}
+});
+app.put('/api/admin/association', authenticate, requireAdmin, writeLimiter, async (req,res,next) => {
+  try {
+    const values = associationFields.map(field => typeof req.body?.[field] === 'string' ? req.body[field].trim() : '');
+    if (values.some((value,i) => !value || value.length > (i === 5 ? 600 : 180)))
+      return res.status(400).json({error:'Alla föreningstexter måste fyllas i och hålla sig inom längdgränsen.'});
+    const {rows} = await pool.query(`UPDATE association_settings SET
+      association_name=$2,app_title=$3,tagline=$4,welcome_title=$5,welcome_text=$6,
+      about_text=$7,updated_at=now() WHERE association_id=$1
+      RETURNING association_id,association_name,app_title,tagline,welcome_title,welcome_text,about_text`,
+      [associationId,...values]);
+    if (!rows.length) return res.status(404).json({error:'Föreningsprofilen saknas.'});
+    res.json({association:rows[0]});
+  } catch(err){next(err);}
+});
+
 // Only administrators may inspect contact details or change another member.
 // No permanent deletion: posts and comments remain attributable to the member.
 app.get('/api/admin/members', authenticate, requireAdmin, async (_req,res,next) => {

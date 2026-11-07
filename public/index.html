@@ -120,10 +120,15 @@ main,.sidebar,.card{min-width:0}
   .members-table { font-size: 11px; }
 }
 </style>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icons/stockevik-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Stockevik">
 </head>
 <body>
-<header><div class="top"><div class="brand" aria-hidden="true">⚓</div><div><div class="name">Det händer i Stockevik</div><div class="tag">Vår egen mötesplats · utan annonser</div></div><div class="pill">Vår mötesplats</div><div id="account" class="account hide"><span id="accountName" class="accountname"></span><button id="logoutBtn" class="btn subtle" type="button">Logga ut</button></div></div></header>
-<section id="loginView" class="loginwall"><div class="card"><div class="eyebrow">Inloggning · version 1.2.2.2</div><h2 style="font:28px Georgia,serif;margin:7px 0 12px">Välkommen tillbaka!</h2><p>Logga in med din e-postadress och ditt lösenord.</p><form id="loginForm"><label for="loginEmail">E-postadress</label><input id="loginEmail" type="email" autocomplete="username" required placeholder="din@epost.se"><div class="field"><label for="loginPassword">Lösenord</label><input id="loginPassword" type="password" autocomplete="current-password" required></div><button class="btn" type="submit">Logga in</button><p class="small" id="loginError" role="alert"></p></form><button id="registerToggle" class="linkbtn" type="button">Ansök om medlemskap</button><div class="note">Inlägg och kommentarer delas mellan godkända medlemmar. Kontakta administratören om din ansökan väntar på godkännande.</div></div></section>
+<header><div class="top"><div class="brand" aria-hidden="true">⚓</div><div><div class="name" id="associationTitle">Det händer i Stockevik</div><div class="tag" id="associationTagline">Vår egen mötesplats · utan annonser</div></div><div class="pill">Vår mötesplats</div><div id="account" class="account hide"><span id="accountName" class="accountname"></span><button id="logoutBtn" class="btn subtle" type="button">Logga ut</button></div></div></header>
+<section id="loginView" class="loginwall"><div class="card"><div class="eyebrow">Inloggning · utvecklingsgren</div><h2 style="font:28px Georgia,serif;margin:7px 0 12px">Välkommen tillbaka!</h2><p>Logga in med din e-postadress och ditt lösenord.</p><form id="loginForm"><label for="loginEmail">E-postadress</label><input id="loginEmail" type="email" autocomplete="username" required placeholder="din@epost.se"><div class="field"><label for="loginPassword">Lösenord</label><input id="loginPassword" type="password" autocomplete="current-password" required></div><button class="btn" type="submit">Logga in</button><p class="small" id="loginError" role="alert"></p></form><button id="registerToggle" class="linkbtn" type="button">Ansök om medlemskap</button><div class="note">Inlägg och kommentarer delas mellan godkända medlemmar. Kontakta administratören om din ansökan väntar på godkännande.</div></div></section>
 <section id="registrationView" class="loginwall hide"><div class="card"><h2>Ansök om medlemskap</h2><p class="small">Endast boende som godkänns av administratören får tillgång till anslagstavlan. Ingen automatisk e-postbekräftelse skickas i denna testversion.</p><form id="registrationForm">
 <div class="field"><label for="regName">Namn</label><input id="regName" required maxlength="100" autocomplete="name"></div>
 <div class="field"><label for="regHouse">Fastighet / hus</label><input id="regHouse" required maxlength="100"></div>
@@ -133,8 +138,8 @@ main,.sidebar,.card{min-width:0}
 <button id="registrationBack" class="linkbtn" type="button">Tillbaka till inloggning</button></div></section>
 <div class="wrap hide" id="appWrap">
  <main>
-  <section class="card"><div class="eyebrow">Vår gemensamma anslagstavla</div><div class="welcome">Välkommen till vår mötesplats!</div><div class="small">Nyheter, bilder och samtal mellan grannar – utan annonser.</div></section>
-  <nav class="tabbar" aria-label="Sidor"><button id="feedTab" class="active">Anslagstavlan</button><button id="membersTab">Medlemmar</button><button id="profileTab">Min profil</button><button id="adminTab" class="hide">Ansökningar</button></nav>
+  <section class="card"><div class="eyebrow">Vår gemensamma anslagstavla</div><div class="welcome" id="associationWelcome">Välkommen till vår mötesplats!</div><div class="small" id="associationWelcomeText">Nyheter, bilder och samtal mellan grannar – utan annonser.</div></section>
+  <nav class="tabbar" aria-label="Sidor"><button id="feedTab" class="active">Anslagstavlan</button><button id="membersTab">Medlemmar</button><button id="profileTab">Min profil</button><button id="adminTab" class="hide">Ansökningar</button><button id="settingsTab" class="hide">Föreningsinställningar</button></nav>
   <div id="feedView">
    <section class="card"><h2>Skriv ett inlägg</h2><textarea id="postText" maxlength="5000" placeholder="Vad vill du dela med grannarna?"></textarea>
     <div id="postPhotoPreview" class="post-photo-preview hide" aria-live="polite"></div>
@@ -161,14 +166,29 @@ main,.sidebar,.card{min-width:0}
    </form></section>
   </div>
   <div id="adminView" class="hide"><section class="card"><h2>Medlemsansökningar</h2><p class="small">Godkänn bara personer som du känner tillhör Stockevik. E-postadresserna visas enbart för administratören.</p><div id="applicationsList"></div><p id="adminStatus" role="status" class="small"></p></section></div>
+  <div id="settingsView" class="hide"><section class="card">
+   <h2>Föreningsinställningar</h2>
+   <p class="small">Ändras enbart av föreningens administratör. Förenings-ID är fast och identifierar denna installation.</p>
+   <p class="small"><strong>Förenings-ID:</strong> <span id="associationId">stockevik</span></p>
+   <form id="associationForm">
+    <div class="field"><label for="associationName">Föreningens namn</label><input id="associationName" required maxlength="180"></div>
+    <div class="field"><label for="associationAppTitle">Appens rubrik</label><input id="associationAppTitle" required maxlength="180"></div>
+    <div class="field"><label for="associationTaglineEdit">Underrubrik</label><input id="associationTaglineEdit" required maxlength="180"></div>
+    <div class="field"><label for="associationWelcomeEdit">Välkomstrubrik</label><input id="associationWelcomeEdit" required maxlength="180"></div>
+    <div class="field"><label for="associationWelcomeTextEdit">Välkomsttext</label><textarea id="associationWelcomeTextEdit" required maxlength="180"></textarea></div>
+    <div class="field"><label for="associationAboutEdit">Beskrivning</label><textarea id="associationAboutEdit" required maxlength="600"></textarea></div>
+    <button type="submit" class="btn">Spara föreningsinställningar</button><p id="associationStatus" class="small" role="status"></p>
+   </form>
+  </section></div>
   <div id="membersView" class="hide">
    <section class="card"><h2>Medlemmar</h2><p class="small">Bara namn, hus och användarnamn visas för inloggade medlemmar.</p><div style="overflow-x:auto"><table class="members-table"><thead><tr><th>Namn</th><th>Hus</th><th>Användarnamn</th><th>Status</th></tr></thead><tbody id="membersList"></tbody></table></div></section>
     <section id="memberAdmin" class="card hide"><h2>Administrera medlemmar</h2><p class="small">Endast administratören kan redigera medlemmar. Inaktivering stänger av inloggningen men behåller inlägg och kommentarer.</p><div id="adminMembersList"></div><p id="adminMembersStatus" class="small" role="status"></p></section>
   </div>
  </main>
- <aside class="sidebar"><section class="card"><h3>Om vår mötesplats</h3><p class="info">Ett privat samtalsforum för oss i Stockevik.</p><p class="info">Här kan vi dela nyheter, tips, frågor och små händelser från vår by.</p></section><section class="card"><h3>Bilder från Stockevik</h3><div class="boxpic">📷<br>Här kommer våra bilder</div><p class="notice">Bildgalleri tillkommer i nästa version.</p></section><section class="card"><h3>Enkelhet och integritet</h3><p class="info">Ingen reklam och ingen profilering. Medlemsuppgifter ska förvaltas av föreningen.</p></section></aside>
+ <aside class="sidebar"><section class="card"><h3>Om vår mötesplats</h3><p class="info" id="associationAbout">Ett privat samtalsforum för oss i Stockevik.</p><p class="info">Här kan vi dela nyheter, tips, frågor och små händelser från vår by.</p></section><section class="card"><h3>Bilder från Stockevik</h3><div class="boxpic">📷<br>Här kommer våra bilder</div><p class="notice">Bildgalleri tillkommer i nästa version.</p></section><section class="card"><h3>Enkelhet och integritet</h3><p class="info">Ingen reklam och ingen profilering. Medlemsuppgifter ska förvaltas av föreningen.</p></section></aside>
 </div>
-<footer>Det händer i Stockevik · Version 1.2.2 · Lösenordsåterställning</footer>
-<script src="/app.js?v=121" defer></script>
+<footer>Det händer i Stockevik · Föreningsapp · utvecklingsversion</footer>
+<script src="/app.js?v=130" defer></script>
+<script src="/pwa.js?v=123" defer></script>
 </body>
 </html>
