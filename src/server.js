@@ -136,9 +136,9 @@ async function initialize() {
     ALTER TABLE members ADD CONSTRAINT members_status_check CHECK (status IN ('active','inactive','pending'));`);
 }
 
-// Bootstrap the very first administrator of a NEW, EMPTY association database.
-// Credentials are provided only through the test web service's Render environment.
-// Once an account exists, this function cannot create or modify anyone.
+// Bootstrap the first administrator if this installation has no administrator yet.
+// Existing members, applications, posts and comments are never changed.
+// Credentials are supplied ONLY via the TEST service's Render environment.
 async function bootstrapFirstAdmin() {
   const email = (process.env.FIRST_ADMIN_EMAIL || '').trim().toLowerCase();
   const name = (process.env.FIRST_ADMIN_NAME || '').trim();
@@ -154,20 +154,26 @@ async function bootstrapFirstAdmin() {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    // Serialise concurrent startup attempts for this database.
+    // Prevent simultaneous startups from creating multiple administrators.
     await client.query('SELECT pg_advisory_xact_lock(745169)');
-    const {rows} = await client.query('SELECT EXISTS(SELECT 1 FROM members) AS any_member');
-    if (rows[0].any_member) {
-      console.log('First administrator bootstrap skipped: members already exist.');
+    const {rows:admins} = await client.query("SELECT id FROM members WHERE role='admin' LIMIT 1");
+    if (admins.length) {
+      console.log('First administrator bootstrap skipped: an administrator already exists.');
       await client.query('COMMIT');
       return;
     }
+    // Never modify an existing member who happens to have the requested email.
+    const {rows:existing} = await client.query('SELECT id FROM members WHERE email=$1', [email]);
+    if (existing.length) {
+      throw new Error('FIRST_ADMIN_EMAIL is already registered. Choose a different email; existing members were not changed.');
+    }
     const hash = await bcrypt.hash(password, 12);
+    const username = 'admin_' + randomBytes(8).toString('hex');
     await client.query(`INSERT INTO members(name, house, username, email, password_hash, status, role)
       VALUES($1,$2,$3,$4,$5,'active','admin')`,
-      [name, house, 'admin', email, hash]);
+      [name, house, username, email, hash]);
     await client.query('COMMIT');
-    console.log('First administrator account created for empty association database.');
+    console.log('First administrator account created; existing members preserved.');
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
