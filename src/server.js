@@ -202,17 +202,17 @@ async function initialize() {
 // Enable CREATE_TEST_GROUP_ONCE=true in the TEST Render service for one deploy only.
 async function createFirstTestGroupOnce() {
   if (process.env.CREATE_TEST_GROUP_ONCE !== 'true') return;
-  const email = (process.env.FIRST_ADMIN_EMAIL || '').trim().toLowerCase();
-  if (!email) throw new Error('CREATE_TEST_GROUP_ONCE requires FIRST_ADMIN_EMAIL.');
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
     await client.query('SELECT pg_advisory_xact_lock(745173)');
+    // The test database must have exactly one active administrator.
+    // Do not depend on FIRST_ADMIN_EMAIL: bootstrap settings may differ from the existing account.
     const { rows: admins } = await client.query(
-      "SELECT id, name, email FROM members WHERE email=$1 AND role='admin' AND status='active'",
-      [email]
+      "SELECT id, name, email FROM members WHERE role='admin' AND status='active'"
     );
-    if (admins.length !== 1) throw new Error('Test group aborted: active test administrator not found.');
+    if (admins.length !== 1) throw new Error('Test group aborted: expected exactly one active administrator.');
+    const email = admins[0].email.trim().toLowerCase();
     const { rows: accounts } = await client.query(
       `INSERT INTO identity_accounts (email, display_name)
        VALUES ($1,$2) ON CONFLICT DO NOTHING RETURNING id`,
