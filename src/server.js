@@ -894,7 +894,7 @@ app.post('/api/groups/:groupId/invitations', authenticate, requireAdmin, writeLi
     await client.query('COMMIT');
     // Do not disclose the bearer token in the API response or server logs.
     // Put it in a URL fragment so the browser does not transmit it in HTTP requests.
-    const invitationUrl = `https://lillachatten.se/accept-invitation.html#token=${token}`;
+    const invitationUrl = `https://www.lillachatten.se/accept-invitation.html#token=${token}`;
     try {
       const apiKey = process.env.RESEND_API_KEY;
       if (!apiKey) throw new Error('RESEND_API_KEY missing');
