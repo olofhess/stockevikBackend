@@ -108,6 +108,15 @@ async function initialize() {
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
   );
   CREATE INDEX IF NOT EXISTS comments_post ON comments(post_id, created_at);
+  -- Each member can have at most one reaction per post. Deleting the post removes reactions.
+  CREATE TABLE IF NOT EXISTS post_reactions (
+    post_id BIGINT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+    member_id BIGINT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+    reaction TEXT NOT NULL CHECK (reaction IN ('up','down','heart')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (post_id, member_id)
+  );
+  CREATE INDEX IF NOT EXISTS post_reactions_member ON post_reactions(member_id);
   `);
   await pool.query(`ALTER TABLE members ADD COLUMN IF NOT EXISTS avatar_data BYTEA;
     ALTER TABLE members ADD COLUMN IF NOT EXISTS avatar_updated_at TIMESTAMPTZ;`);
@@ -299,13 +308,59 @@ app.get('/api/posts/:id/image', authenticate, async (req,res,next) => {
   } catch(err) { next(err); }
 });
 
-app.get('/api/posts', authenticate, async (_req, res, next) => {
+app.get('/api/posts', authenticate, async (req, res, next) => {
   try {
     const {rows} = await pool.query(`SELECT p.id, p.body, p.created_at, (p.image_data IS NOT NULL) AS has_image, m.name AS author, m.id AS author_id, m.avatar_updated_at AS author_avatar_version,
       COALESCE((SELECT json_agg(json_build_object('id',c.id,'text',c.body,'date',c.created_at,'author',cm.name,'authorId',cm.id,'avatarVersion',cm.avatar_updated_at) ORDER BY c.created_at,c.id)
       FROM comments c JOIN members cm ON cm.id=c.member_id WHERE c.post_id=p.id),'[]'::json) AS comments
       FROM posts p JOIN members m ON m.id=p.member_id ORDER BY p.created_at DESC,p.id DESC LIMIT 100`);
-    res.json({posts:rows.map(p=>({id:p.id, text:p.body, date:p.created_at, author:p.author, authorId:p.author_id, avatarVersion:p.author_avatar_version ? new Date(p.author_avatar_version).getTime() : null, hasImage:p.has_image, comments:p.comments}))});
+    const ids = rows.map(p => p.id);
+    const counts = new Map();
+    const mine = new Map();
+    if (ids.length) {
+      const [allReactions, myReactions] = await Promise.all([
+        pool.query(`SELECT post_id, reaction, count(*)::int AS total FROM post_reactions
+                    WHERE post_id = ANY($1::bigint[]) GROUP BY post_id, reaction`, [ids]),
+        pool.query(`SELECT post_id, reaction FROM post_reactions
+                    WHERE member_id=$1 AND post_id = ANY($2::bigint[])`, [req.member.id, ids])
+      ]);
+      for (const r of allReactions.rows) {
+        const id = String(r.post_id);
+        if (!counts.has(id)) counts.set(id, {up:0, down:0, heart:0});
+        counts.get(id)[r.reaction] = r.total;
+      }
+      for (const r of myReactions.rows) mine.set(String(r.post_id), r.reaction);
+    }
+    res.json({posts:rows.map(p=>({
+      id:p.id, text:p.body, date:p.created_at, author:p.author, authorId:p.author_id,
+      avatarVersion:p.author_avatar_version ? new Date(p.author_avatar_version).getTime() : null,
+      hasImage:p.has_image, comments:p.comments,
+      reactions:counts.get(String(p.id)) || {up:0,down:0,heart:0},
+      myReaction:mine.get(String(p.id)) || null
+    }))});
+  } catch(err){next(err);}
+});
+
+// One reaction per member and post: choose another emoji to replace it, or click again to undo.
+// This endpoint also serves reactions to post images because the image belongs to the post.
+app.put('/api/posts/:id/reaction', authenticate, writeLimiter, async (req,res,next) => {
+  try {
+    if (!/^\d+$/.test(req.params.id)) return res.status(400).json({error:'Ogiltigt inläggs-ID.'});
+    const reaction = req.body?.reaction;
+    if (reaction !== null && !['up','down','heart'].includes(reaction))
+      return res.status(400).json({error:'Välj tumme upp, tumme ner eller hjärta.'});
+    const exists = await pool.query('SELECT 1 FROM posts WHERE id=$1', [req.params.id]);
+    if (!exists.rowCount) return res.status(404).json({error:'Inlägget saknas.'});
+    if (reaction === null) {
+      await pool.query('DELETE FROM post_reactions WHERE post_id=$1 AND member_id=$2',
+        [req.params.id,req.member.id]);
+    } else {
+      await pool.query(`INSERT INTO post_reactions(post_id,member_id,reaction)
+          VALUES($1,$2,$3) ON CONFLICT(post_id,member_id)
+          DO UPDATE SET reaction=EXCLUDED.reaction`,
+        [req.params.id,req.member.id,reaction]);
+    }
+    res.json({ok:true});
   } catch(err){next(err);}
 });
 
