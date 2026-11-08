@@ -781,6 +781,39 @@ app.get('/api/my-admin-groups', authenticate, requireAdmin, async (req, res, nex
   } catch (err) {next(err);}
 });
 
+// Restricted Resend smoke test. Sends only to the logged-in administrator's own address.
+// No invitation token is emailed: the recipient acceptance flow is not yet implemented.
+app.post('/api/admin/test-email', authenticate, requireAdmin, writeLimiter, async (req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) return res.status(503).json({error:'RESEND_API_KEY saknas i Render.'});
+  try {
+    const recipient = req.member.email;
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'Idempotency-Key': `lillachatten-test-${randomBytes(16).toString('hex')}`
+      },
+      body: JSON.stringify({
+        from: 'Lilla Chatten <inbjudan@lillachatten.se>',
+        to: [recipient],
+        subject: 'Test av e-post från Lilla Chatten',
+        text: 'Det här är ett testmeddelande från Lilla Chatten. Resend-anslutningen fungerar om du får mejlet.'
+      }),
+      signal: AbortSignal.timeout(15000)
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      console.error('Resend test-email failed:', response.status, result?.name || 'unknown');
+      return res.status(502).json({error:'Resend kunde inte ta emot testmejlet.', resendStatus:response.status,
+        detail:typeof result?.message === 'string' ? result.message.slice(0,300) : undefined});
+    }
+    res.json({ok:true, message:'Resend tog emot testmejlet.', to:recipient, id:result.id});
+  } catch (err) { next(err); }
+});
+
 // First invitation stage: only a logged-in group administrator can create an invitation.
 // The invitation is NOT a membership and does NOT grant access to any group content.
 // Email delivery and acceptance are deliberately not enabled yet.
