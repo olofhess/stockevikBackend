@@ -74,7 +74,7 @@ function view(tab) {
   if (tab === 'members') { loadMembers(); loadAdminMembers(); }
   if (tab === 'profile') renderProfile();
   if (tab === 'feed') loadPosts();
-  if (tab === 'admin') loadApplications();
+  if (tab === 'admin') { loadApplications(); loadTestInvitationGroups(); }
   if (tab === 'settings') fillAssociationForm();
 }
 $('feedTab').onclick = () => view('feed');
@@ -491,6 +491,51 @@ $('registrationForm').onsubmit=async e=>{
   } catch(err) { status.textContent=err.message; }
   finally { button.disabled=false; }
 };
+// Temporary invitation test UI. Uses existing logged-in administrator session.
+async function loadTestInvitationGroups() {
+  const section = $('testInvitationSection');
+  const selector = $('testInvitationGroup');
+  const status = $('testInvitationStatus');
+  section.hidden = true;
+  selector.replaceChildren();
+  try {
+    const result = await api('/my-admin-groups');
+    if (!result.groups?.length) return;
+    for (const group of result.groups) {
+      const option = document.createElement('option');
+      option.value = String(group.id);
+      option.textContent = group.group_name;
+      selector.append(option);
+    }
+    section.hidden = false;
+    status.textContent = '';
+  } catch (err) {
+    section.hidden = false;
+    status.textContent = err.message;
+  }
+}
+$('testInvitationForm').onsubmit = async event => {
+  event.preventDefault();
+  const button = $('testInvitationForm').querySelector('button[type="submit"]');
+  const status = $('testInvitationStatus');
+  $('testInvitationResult').hidden = true;
+  $('testInvitationLink').value = '';
+  button.disabled = true;
+  status.textContent = 'Skapar inbjudan …';
+  try {
+    const groupId = $('testInvitationGroup').value;
+    if (!/^\d+$/.test(groupId)) throw new Error('Ingen giltig grupp vald.');
+    const result = await api('/groups/' + groupId + '/invitations', 'POST', {
+      email: $('testInvitationEmail').value.trim()
+    });
+    const url = location.origin + '/inbjudan.html#token=' + result.token;
+    $('testInvitationLink').value = url;
+    $('testInvitationResult').hidden = false;
+    status.textContent = 'Testinbjudan skapad. Kopiera länken och öppna den i Safari.';
+  } catch (err) {status.textContent = err.message;}
+  finally {button.disabled = false;}
+};
+
 async function loadApplications() {
   const host=$('applicationsList');
   host.replaceChildren();

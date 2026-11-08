@@ -763,6 +763,24 @@ app.post('/api/admin/applications/:id/decision', authenticate, requireAdmin, wri
   } catch(err){next(err);}
 });
 
+// List only the groups administered by the logged-in test account.
+// This endpoint never exposes other members' contact details.
+app.get('/api/my-admin-groups', authenticate, requireAdmin, async (req, res, next) => {
+  try {
+    const {rows} = await pool.query(
+      `SELECT gs.id, gs.group_name FROM group_spaces gs
+       JOIN group_memberships gm ON gm.group_id=gs.id
+       JOIN identity_accounts ia ON ia.id=gm.account_id
+       WHERE lower(ia.email)=lower($1)
+         AND gm.role='admin' AND gm.status='active'
+         AND gs.state IN ('provisional','active')
+       ORDER BY gs.id`, [req.member.email]
+    );
+    res.set('Cache-Control', 'no-store');
+    res.json({groups: rows});
+  } catch (err) {next(err);}
+});
+
 // First invitation stage: only a logged-in group administrator can create an invitation.
 // The invitation is NOT a membership and does NOT grant access to any group content.
 // Email delivery and acceptance are deliberately not enabled yet.

@@ -173,7 +173,22 @@ main,.sidebar,.card{min-width:0}
     <button class="btn" type="submit">Ändra lösenord</button><p id="passwordStatus" class="small" role="status"></p>
    </form></section>
   </div>
-  <div id="adminView" class="hide"><section class="card"><h2>Medlemsansökningar</h2><p class="small">Godkänn bara personer som du känner tillhör Stockevik. E-postadresserna visas enbart för administratören.</p><div id="applicationsList"></div><p id="adminStatus" role="status" class="small"></p></section></div>
+  <div id="adminView" class="hide">
+    <section class="card" id="testInvitationSection" hidden>
+      <h2>Testa personlig inbjudan</h2>
+      <p class="small">Skapar en inbjudningslänk. Inget mejl skickas och medlemskap kan ännu inte bekräftas.</p>
+      <form id="testInvitationForm">
+        <div class="field"><label for="testInvitationGroup">Grupp</label><select id="testInvitationGroup" required></select></div>
+        <div class="field"><label for="testInvitationEmail">Mottagarens e-postadress</label><input id="testInvitationEmail" type="email" maxlength="180" autocomplete="off" required></div>
+        <button class="btn" type="submit">Skapa testinbjudan</button>
+      </form>
+      <div id="testInvitationResult" hidden>
+        <p class="small">Privat testlänk – dela den inte med andra ännu:</p>
+        <input id="testInvitationLink" type="text" readonly aria-label="Personlig inbjudningslänk">
+      </div>
+      <p id="testInvitationStatus" class="small" role="status"></p>
+    </section>
+    <section class="card"><h2>Medlemsansökningar</h2><p class="small">Godkänn bara personer som du känner tillhör Stockevik. E-postadresserna visas enbart för administratören.</p><div id="applicationsList"></div><p id="adminStatus" role="status" class="small"></p></section></div>
   <div id="settingsView" class="hide"><section class="card">
    <h2>Föreningsinställningar</h2>
    <p class="small">Ändras enbart av föreningens administratör. Förenings-ID är fast och identifierar denna installation.</p>
@@ -196,7 +211,7 @@ main,.sidebar,.card{min-width:0}
  <aside class="sidebar"><section class="card"><h3>Om vår mötesplats</h3><p class="info" id="associationAbout">Ett privat samtalsforum för oss i Stockevik.</p><p class="info">Här kan vi dela nyheter, tips, frågor och små händelser från vår by.</p></section><section class="card"><h3>Bilder från Stockevik</h3><div class="boxpic">📷<br>Här kommer våra bilder</div><p class="notice">Bildgalleri tillkommer i nästa version.</p></section><section class="card"><h3>Enkelhet och integritet</h3><p class="info">Ingen reklam och ingen profilering. Medlemsuppgifter ska förvaltas av föreningen.</p></section></aside>
 </div>
 <footer>Det händer i Stockevik · Föreningsapp · utvecklingsversion</footer>
-<script src="/app.js?v=132" defer></script>
+<script src="/app.js?v=133" defer></script>
 <script src="/pwa.js?v=123" defer></script>
 </body>
 </html>
