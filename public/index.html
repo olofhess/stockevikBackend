@@ -174,19 +174,10 @@ main,.sidebar,.card{min-width:0}
    </form></section>
   </div>
   <div id="adminView" class="hide">
-    <section class="card" id="testInvitationSection" hidden>
-      <h2>Testa personlig inbjudan</h2>
-      <p class="small">Skapar en inbjudningslänk. Inget mejl skickas och medlemskap kan ännu inte bekräftas.</p>
-      <form id="testInvitationForm">
-        <div class="field"><label for="testInvitationGroup">Grupp</label><select id="testInvitationGroup" required></select></div>
-        <div class="field"><label for="testInvitationEmail">Mottagarens e-postadress</label><input id="testInvitationEmail" type="email" maxlength="180" autocomplete="off" required></div>
-        <button class="btn" type="submit">Skapa testinbjudan</button>
-      </form>
-      <div id="testInvitationResult" hidden>
-        <p class="small">Privat testlänk – dela den inte med andra ännu:</p>
-        <input id="testInvitationLink" type="text" readonly aria-label="Personlig inbjudningslänk">
-      </div>
-      <p id="testInvitationStatus" class="small" role="status"></p>
+    <section class="card">
+      <h2>Medlemsinbjudningar</h2>
+      <p class="small">Skicka en personlig inbjudan via e-post. Mottagaren kan öppna länken och skapa sitt konto.</p>
+      <p><a href="/invite-admin.html">Skicka medlemsinbjudan</a></p>
     </section>
     <section class="card"><h2>Medlemsansökningar</h2><p class="small">Godkänn bara personer som du känner tillhör Stockevik. E-postadresserna visas enbart för administratören.</p><div id="applicationsList"></div><p id="adminStatus" role="status" class="small"></p></section></div>
   <div id="settingsView" class="hide"><section class="card">
