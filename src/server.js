@@ -822,7 +822,7 @@ app.post('/api/admin/test-email', authenticate, requireAdmin, writeLimiter, asyn
 
 // First invitation stage: only a logged-in group administrator can create an invitation.
 // The invitation is NOT a membership and does NOT grant access to any group content.
-// Email delivery and acceptance are deliberately not enabled yet.
+// Email invitations are sent with Resend; acceptance requires the recipient to create an account.
 app.post('/api/groups/:groupId/invitations', authenticate, requireAdmin, writeLimiter, async (req, res, next) => {
   const groupId = req.params.groupId;
   const invitedEmail = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
@@ -834,7 +834,7 @@ app.post('/api/groups/:groupId/invitations', authenticate, requireAdmin, writeLi
     await client.query('BEGIN');
     // Serialize invitations for one group to enforce the free group's member ceiling.
     const {rows: groups} = await client.query(
-      'SELECT id, plan FROM group_spaces WHERE id=$1 FOR UPDATE', [groupId]);
+      'SELECT id, plan, group_name FROM group_spaces WHERE id=$1 FOR UPDATE', [groupId]);
     if (groups.length !== 1) {
       await client.query('ROLLBACK');
       return res.status(404).json({error:'Gruppen finns inte.'});
@@ -892,13 +892,39 @@ app.post('/api/groups/:groupId/invitations', authenticate, requireAdmin, writeLi
       [groupId, invitedEmail, admins[0].id, hashToken(token)]
     );
     await client.query('COMMIT');
+    // Do not disclose the bearer token in the API response or server logs.
+    // Put it in a URL fragment so the browser does not transmit it in HTTP requests.
+    const invitationUrl = `https://lillachatten.se/accept-invitation.html#token=${token}`;
+    try {
+      const apiKey = process.env.RESEND_API_KEY;
+      if (!apiKey) throw new Error('RESEND_API_KEY missing');
+      const response = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          'Idempotency-Key': `lillachatten-invite-${invitations[0].id}`
+        },
+        body: JSON.stringify({
+          from: 'Lilla Chatten <inbjudan@lillachatten.se>',
+          to: [invitedEmail],
+          subject: 'Du är inbjuden till Lilla Chatten',
+          text: `Du är inbjuden till ${groups[0].group_name || 'Lilla Chatten'}.\n\nÖppna länken för att skapa ditt konto:\n${invitationUrl}\n\nInbjudan gäller i 48 timmar. Om du inte känner igen inbjudan kan du ignorera brevet.`,
+        }),
+        signal: AbortSignal.timeout(15000)
+      });
+      if (!response.ok) throw new Error(`Resend status ${response.status}`);
+    } catch (mailError) {
+      // A failed send must not block a fresh invitation attempt.
+      await pool.query('UPDATE group_invitations SET revoked_at=now() WHERE id=$1 AND accepted_at IS NULL', [invitations[0].id]);
+      console.error('Invitation email failure:', mailError.message);
+      return res.status(502).json({error:'Inbjudan kunde inte skickas. Försök igen.'});
+    }
     res.status(201).json({
+      ok: true,
       invitationId: invitations[0].id,
       expiresAt: invitations[0].expires_at,
-      // This bearer token must only be delivered privately to the intended invitee.
-      // No recipient-facing invitation page exists yet; do not distribute it now.
-      token,
-      message: 'Inbjudan skapad men kan inte skickas innan mottagarsidan är klar.'
+      message: 'Inbjudan skickad via e-post.'
     });
   } catch (err) {
     try { await client.query('ROLLBACK'); } catch (_) { /* Preserve original error. */ }
@@ -932,6 +958,68 @@ app.post('/api/invitations/preview', registrationLimiter, async (req, res, next)
     res.json({groupName:rows[0].group_name, email:rows[0].invited_email,
       expiresAt:rows[0].expires_at, canAccept:false});
   } catch (err) {next(err);}
+});
+
+// Accept a single-use invitation. New accounts become active only after presenting
+// the secret invitation token. This never changes any existing account.
+app.post('/api/invitations/accept', registrationLimiter, async (req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  const token = typeof req.body?.token === 'string' ? req.body.token : '';
+  const name = safeText(req.body?.name, 100);
+  const house = safeText(req.body?.house, 100);
+  const password = typeof req.body?.password === 'string' ? req.body.password : '';
+  if (!/^[0-9a-f]{64}$/.test(token) || !name || !house || password.length < 12 || password.length > 200) {
+    return res.status(400).json({error:'Ange namn, bostad och lösenord med minst 12 tecken.'});
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const {rows} = await client.query(
+      `SELECT gi.id,gi.group_id,gi.invited_email, gs.plan
+       FROM group_invitations gi JOIN group_spaces gs ON gs.id=gi.group_id
+       WHERE gi.token_hash=$1 AND gi.accepted_at IS NULL
+         AND gi.revoked_at IS NULL AND gi.expires_at>now()
+         AND gs.state IN ('provisional','active') FOR UPDATE OF gi`, [hashToken(token)]);
+    if (rows.length !== 1) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({error:'Inbjudan är ogiltig, använd eller har gått ut.'});
+    }
+    const invite=rows[0], email=invite.invited_email.trim().toLowerCase();
+    // Prevent an invite from modifying an existing user's password or permissions.
+    const {rows: existing} = await client.query(
+      'SELECT 1 FROM members WHERE lower(email)=$1 UNION ALL SELECT 1 FROM identity_accounts WHERE lower(email)=$1 LIMIT 1',
+      [email]);
+    if (existing.length) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({error:'Ett konto finns redan för adressen. Kontakta administratören.'});
+    }
+    await client.query('SELECT id FROM group_spaces WHERE id=$1 FOR UPDATE', [invite.group_id]);
+    const {rows: active} = await client.query(
+      `SELECT count(*)::int AS total FROM group_memberships WHERE group_id=$1 AND status='active'`,
+      [invite.group_id]);
+    if (invite.plan === 'free' && active[0].total >= 25) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({error:'Gruppen är full. Kontakta administratören.'});
+    }
+    const passwordHash = await bcrypt.hash(password, 12);
+    const username='medlem_'+randomBytes(12).toString('hex');
+    const {rows:members} = await client.query(
+      `INSERT INTO members(name,house,username,email,password_hash,status,role)
+       VALUES($1,$2,$3,$4,$5,'active','member') RETURNING id`,
+      [name,house,username,email,passwordHash]);
+    const {rows:accounts}=await client.query(
+      'INSERT INTO identity_accounts(email,display_name) VALUES($1,$2) RETURNING id',[email,name]);
+    await client.query(
+      `INSERT INTO group_memberships(group_id,account_id,role,status)
+       VALUES($1,$2,'member','active')`,[invite.group_id,accounts[0].id]);
+    await client.query('UPDATE group_invitations SET accepted_at=now() WHERE id=$1',[invite.id]);
+    await client.query('COMMIT');
+    res.status(201).json({ok:true,message:'Kontot är skapat. Du kan nu logga in.'});
+  } catch(err) {
+    try {await client.query('ROLLBACK');} catch(_){}
+    if (err.code==='23505') return res.status(409).json({error:'E-postadressen är redan registrerad.'});
+    next(err);
+  } finally {client.release();}
 });
 
 // Frontend and API share one origin, so the secure session cookie works in browsers.
