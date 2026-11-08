@@ -851,6 +851,32 @@ app.post('/api/groups/:groupId/invitations', authenticate, requireAdmin, writeLi
   }
 });
 
+// Invitation preview only: never grants membership or discloses group posts.
+// Link secret is transmitted in POST body, not in URLs or request logs.
+app.post('/api/invitations/preview', registrationLimiter, async (req, res, next) => {
+  res.set('Cache-Control', 'no-store');
+  const token = typeof req.body?.token === 'string' ? req.body.token : '';
+  if (!/^[0-9a-f]{64}$/.test(token)) {
+    return res.status(400).json({error:'Ogiltig inbjudningslänk.'});
+  }
+  try {
+    const {rows} = await pool.query(
+      `SELECT gs.group_name, gi.invited_email, gi.expires_at
+       FROM group_invitations gi
+       JOIN group_spaces gs ON gs.id=gi.group_id
+       WHERE gi.token_hash=$1 AND gi.accepted_at IS NULL
+         AND gi.revoked_at IS NULL AND gi.expires_at > now()
+         AND gs.state IN ('provisional','active')`,
+      [hashToken(token)]
+    );
+    if (rows.length !== 1) {
+      return res.status(404).json({error:'Inbjudan är ogiltig eller har gått ut.'});
+    }
+    res.json({groupName:rows[0].group_name, email:rows[0].invited_email,
+      expiresAt:rows[0].expires_at, canAccept:false});
+  } catch (err) {next(err);}
+});
+
 // Frontend and API share one origin, so the secure session cookie works in browsers.
 app.use(express.static('public'));
 app.use((req,res)=>res.status(404).json({error:'OkÃ¤nd adress.'}));
