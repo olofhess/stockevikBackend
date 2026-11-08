@@ -119,6 +119,14 @@ main,.sidebar,.card{min-width:0}
   .accountname { font-size: 11px; }
   .members-table { font-size: 11px; }
 }
+
+/* Reactions: compact, accessible touch targets on phones and tablets */
+.reaction-bar{display:flex;align-items:center;gap:8px;margin:11px 0 10px;flex-wrap:wrap}
+.reaction-button{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;min-width:66px;padding:7px 12px;background:#f5f9f9;border:1px solid #cbdcde;border-radius:22px;color:var(--ink);font-weight:600}
+.reaction-button.selected{background:#d9eff2;border-color:#24697b;box-shadow:inset 0 0 0 1px #24697b}
+.reaction-button:disabled{opacity:.65;cursor:wait}
+.reaction-emoji{font-size:20px;line-height:1.1}.reaction-count{font-size:14px;font-variant-numeric:tabular-nums}
+@media(max-width:650px){.reaction-bar{gap:6px;margin:7px 0}.reaction-button{min-width:58px;padding:6px 9px;gap:6px}}
 </style>
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/icons/stockevik-180.png">
@@ -188,7 +196,7 @@ main,.sidebar,.card{min-width:0}
  <aside class="sidebar"><section class="card"><h3>Om vår mötesplats</h3><p class="info" id="associationAbout">Ett privat samtalsforum för oss i Stockevik.</p><p class="info">Här kan vi dela nyheter, tips, frågor och små händelser från vår by.</p></section><section class="card"><h3>Bilder från Stockevik</h3><div class="boxpic">📷<br>Här kommer våra bilder</div><p class="notice">Bildgalleri tillkommer i nästa version.</p></section><section class="card"><h3>Enkelhet och integritet</h3><p class="info">Ingen reklam och ingen profilering. Medlemsuppgifter ska förvaltas av föreningen.</p></section></aside>
 </div>
 <footer>Det händer i Stockevik · Föreningsapp · utvecklingsversion</footer>
-<script src="/app.js?v=130" defer></script>
+<script src="/app.js?v=132" defer></script>
 <script src="/pwa.js?v=123" defer></script>
 </body>
 </html>

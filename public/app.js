@@ -178,6 +178,37 @@ function renderPosts() {
         field.focus();
       };
     }
+    // Reactions apply to the entire post, including an attached image.
+    // A member can choose one; pressing the selected choice again removes it.
+    const reactionBar = element('div', 'reaction-bar');
+    const choices = [
+      ['up', '👍', 'Tumme upp'],
+      ['down', '👎', 'Tumme ner'],
+      ['heart', '❤️', 'Hjärta']
+    ];
+    for (const [value, emoji, label] of choices) {
+      const selected = p.myReaction === value;
+      const button = element('button', selected ? 'reaction-button selected' : 'reaction-button');
+      button.type = 'button';
+      button.title = selected ? 'Ta bort ' + label.toLowerCase() : label;
+      button.setAttribute('aria-label', button.title);
+      button.setAttribute('aria-pressed', String(selected));
+      button.append(element('span', 'reaction-emoji', emoji));
+      button.append(element('span', 'reaction-count', String(p.reactions?.[value] || 0)));
+      button.onclick = async () => {
+        reactionBar.querySelectorAll('button').forEach(b => b.disabled = true);
+        try {
+          await api('/posts/' + p.id + '/reaction', 'PUT',
+            {reaction: selected ? null : value});
+          await loadPosts();
+        } catch (err) {
+          alert(err.message);
+          reactionBar.querySelectorAll('button').forEach(b => b.disabled = false);
+        }
+      };
+      reactionBar.append(button);
+    }
+    card.append(reactionBar);
     const comments = Array.isArray(p.comments) ? p.comments : [];
     const footer = element('div','postfooter');
     const toggle = element('button','linkbtn',`💬 Kommentarer (${comments.length})`);
