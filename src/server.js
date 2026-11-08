@@ -780,6 +780,18 @@ try {
   }
 
   await bootstrapFirstAdmin();
+  // TEMPORARY DIAGNOSTIC: report counts only; no personal data or secrets in logs.
+  const diagnosticAdminEmail = (process.env.FIRST_ADMIN_EMAIL || '').trim().toLowerCase();
+  const { rows: diagnosticAdminRows } = await pool.query(`
+    SELECT
+      count(*) FILTER (WHERE role = 'admin')::int AS all_admins,
+      count(*) FILTER (WHERE role = 'admin' AND status = 'active')::int AS active_admins,
+      count(*) FILTER (WHERE lower(email) = $1)::int AS email_matches,
+      count(*) FILTER (WHERE lower(email) = $1 AND status = 'active')::int AS email_active,
+      count(*) FILTER (WHERE lower(email) = $1 AND role = 'admin')::int AS email_admin
+    FROM members`, [diagnosticAdminEmail]);
+  const d = diagnosticAdminRows[0];
+  console.log(`Test-admin diagnosis: all_admins=${d.all_admins}, active_admins=${d.active_admins}, email_matches=${d.email_matches}, email_active=${d.email_active}, email_admin=${d.email_admin}`);
   await createFirstTestGroupOnce();
 
   // Tillfällig engångsåterställning. Aktiveras enbart med explicit Render-variabel.
