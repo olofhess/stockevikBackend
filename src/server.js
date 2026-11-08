@@ -665,6 +665,35 @@ app.use((err,req,res,next)=>{
 try {
   await initialize();
   await bootstrapFirstAdmin();
+
+  // Tillfällig engångsåterställning. Aktiveras enbart med explicit Render-variabel.
+  if (process.env.RESET_FIRST_ADMIN_PASSWORD === 'true') {
+    const email = (process.env.FIRST_ADMIN_EMAIL || '').trim().toLowerCase();
+    const password = process.env.FIRST_ADMIN_PASSWORD || '';
+    if (!email || password.length < 12 || password.length > 200) {
+      throw new Error('Admin reset requires FIRST_ADMIN_EMAIL and FIRST_ADMIN_PASSWORD (minst 12 tecken).');
+    }
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const { rows } = await client.query(
+        "SELECT id FROM members WHERE email=$1 AND role='admin' AND status='active' FOR UPDATE",
+        [email]
+      );
+      if (rows.length !== 1) throw new Error('Admin reset aborted: aktiv administrator med angiven e-post saknas.');
+      const hash = await bcrypt.hash(password, 12);
+      await client.query('UPDATE members SET password_hash=$1 WHERE id=$2', [hash, rows[0].id]);
+      await client.query('DELETE FROM sessions WHERE member_id=$1', [rows[0].id]);
+      await client.query('COMMIT');
+      console.log('Existing test administrator password reset; old sessions cleared.');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   await seedOnlyForDemo();
   await resetKallePasswordOnce();
   // Explicit administrator assignment: set ADMIN_EMAIL to an existing account in Render.
