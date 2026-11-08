@@ -788,7 +788,13 @@ app.post('/api/admin/test-email', authenticate, requireAdmin, writeLimiter, asyn
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) return res.status(503).json({error:'RESEND_API_KEY saknas i Render.'});
   try {
-    const recipient = req.member.email;
+    // Only the logged-in administrator or the explicitly approved test recipient.
+    const requestedRecipient = typeof req.body?.to === 'string' ? req.body.to.trim().toLowerCase() : '';
+    const permittedRecipients = [req.member.email.toLowerCase(), 'olof.hesselmark@gmail.com'];
+    if (requestedRecipient && !permittedRecipients.includes(requestedRecipient)) {
+      return res.status(400).json({error:'Mottagaren är inte godkänd för testutskick.'});
+    }
+    const recipient = requestedRecipient || req.member.email;
     const response = await fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: {
