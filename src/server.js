@@ -763,6 +763,94 @@ app.post('/api/admin/applications/:id/decision', authenticate, requireAdmin, wri
   } catch(err){next(err);}
 });
 
+// First invitation stage: only a logged-in group administrator can create an invitation.
+// The invitation is NOT a membership and does NOT grant access to any group content.
+// Email delivery and acceptance are deliberately not enabled yet.
+app.post('/api/groups/:groupId/invitations', authenticate, requireAdmin, writeLimiter, async (req, res, next) => {
+  const groupId = req.params.groupId;
+  const invitedEmail = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  if (!/^\d+$/.test(groupId) || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(invitedEmail) || invitedEmail.length > 180) {
+    return res.status(400).json({error:'Ange giltig grupp och e-postadress.'});
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    // Serialize invitations for one group to enforce the free group's member ceiling.
+    const {rows: groups} = await client.query(
+      'SELECT id, plan FROM group_spaces WHERE id=$1 FOR UPDATE', [groupId]);
+    if (groups.length !== 1) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({error:'Gruppen finns inte.'});
+    }
+    // Match the current, authenticated legacy admin to its new identity,
+    // and verify admin membership in this particular group.
+    const {rows: admins} = await client.query(
+      `SELECT ia.id FROM identity_accounts ia
+       JOIN group_memberships gm ON gm.account_id=ia.id
+       WHERE lower(ia.email)=lower($1) AND gm.group_id=$2
+         AND gm.role='admin' AND gm.status='active'`,
+      [req.member.email, groupId]
+    );
+    if (admins.length !== 1) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({error:'Du administrerar inte den här gruppen.'});
+    }
+    const {rows: active} = await client.query(
+      `SELECT count(*)::int AS total FROM group_memberships
+       WHERE group_id=$1 AND status='active'`, [groupId]
+    );
+    const {rows: existingMember} = await client.query(
+      `SELECT 1 FROM identity_accounts ia JOIN group_memberships gm ON gm.account_id=ia.id
+       WHERE gm.group_id=$1 AND gm.status='active' AND lower(ia.email)=$2 LIMIT 1`,
+      [groupId, invitedEmail]
+    );
+    if (existingMember.length) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({error:'Personen är redan medlem.'});
+    }
+    const {rows: pending} = await client.query(
+      `SELECT count(*)::int AS total FROM group_invitations
+       WHERE group_id=$1 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at>now()`,
+      [groupId]
+    );
+    if (groups[0].plan === 'free' && active[0].total + pending[0].total >= 25) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({error:'Gratisgruppen har redan 25 medlemmar eller öppna inbjudningar.'});
+    }
+    const {rows: duplicates} = await client.query(
+      `SELECT 1 FROM group_invitations WHERE group_id=$1 AND lower(invited_email)=$2
+       AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at>now() LIMIT 1`,
+      [groupId, invitedEmail]
+    );
+    if (duplicates.length) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({error:'En giltig inbjudan finns redan för adressen.'});
+    }
+    const token = randomBytes(32).toString('hex');
+    const {rows: invitations} = await client.query(
+      `INSERT INTO group_invitations
+       (group_id, invited_email, invited_by, token_hash, expires_at)
+       VALUES ($1,$2,$3,$4,now() + interval '48 hours')
+       RETURNING id, expires_at`,
+      [groupId, invitedEmail, admins[0].id, hashToken(token)]
+    );
+    await client.query('COMMIT');
+    res.status(201).json({
+      invitationId: invitations[0].id,
+      expiresAt: invitations[0].expires_at,
+      // This bearer token must only be delivered privately to the intended invitee.
+      // No recipient-facing invitation page exists yet; do not distribute it now.
+      token,
+      message: 'Inbjudan skapad men kan inte skickas innan mottagarsidan är klar.'
+    });
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch (_) { /* Preserve original error. */ }
+    next(err);
+  } finally {
+    client.release();
+  }
+});
+
 // Frontend and API share one origin, so the secure session cookie works in browsers.
 app.use(express.static('public'));
 app.use((req,res)=>res.status(404).json({error:'OkÃ¤nd adress.'}));
