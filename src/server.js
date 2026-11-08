@@ -717,6 +717,12 @@ app.use((err,req,res,next)=>{
 
 try {
   await initialize();
+  // Schema check (temporary): print only table names and row counts. No personal data.
+  for (const table of ['identity_accounts', 'group_spaces', 'group_memberships', 'group_invitations']) {
+    const { rows } = await pool.query(`SELECT count(*)::int AS total FROM ${table}`);
+    console.log(`Schema check: ${table} exists; rows=${rows[0].total}`);
+  }
+
   await bootstrapFirstAdmin();
 
   // Tillfällig engångsåterställning. Aktiveras enbart med explicit Render-variabel.
