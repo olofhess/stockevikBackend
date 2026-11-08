@@ -865,6 +865,15 @@ app.post('/api/groups/:groupId/invitations', authenticate, requireAdmin, writeLi
       await client.query('ROLLBACK');
       return res.status(409).json({error:'Personen är redan medlem.'});
     }
+    // A group administrator may replace an unaccepted invitation for the same address.
+    // This permits recovery if the email was lost or the previous link was exposed.
+    // Only invitations for this group and this email are revoked; members are untouched.
+    await client.query(
+      `UPDATE group_invitations SET revoked_at=now()
+       WHERE group_id=$1 AND lower(invited_email)=$2
+         AND accepted_at IS NULL AND revoked_at IS NULL`,
+      [groupId, invitedEmail]
+    );
     const {rows: pending} = await client.query(
       `SELECT count(*)::int AS total FROM group_invitations
        WHERE group_id=$1 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at>now()`,
@@ -873,15 +882,6 @@ app.post('/api/groups/:groupId/invitations', authenticate, requireAdmin, writeLi
     if (groups[0].plan === 'free' && active[0].total + pending[0].total >= 25) {
       await client.query('ROLLBACK');
       return res.status(409).json({error:'Gratisgruppen har redan 25 medlemmar eller öppna inbjudningar.'});
-    }
-    const {rows: duplicates} = await client.query(
-      `SELECT 1 FROM group_invitations WHERE group_id=$1 AND lower(invited_email)=$2
-       AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at>now() LIMIT 1`,
-      [groupId, invitedEmail]
-    );
-    if (duplicates.length) {
-      await client.query('ROLLBACK');
-      return res.status(409).json({error:'En giltig inbjudan finns redan för adressen.'});
     }
     const token = randomBytes(32).toString('hex');
     const {rows: invitations} = await client.query(
