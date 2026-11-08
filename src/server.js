@@ -198,6 +198,62 @@ async function initialize() {
     ALTER TABLE members ADD CONSTRAINT members_status_check CHECK (status IN ('active','inactive','pending'));`);
 }
 
+// Temporary, explicit test-only seed. No emails sent, no existing logins changed.
+// Enable CREATE_TEST_GROUP_ONCE=true in the TEST Render service for one deploy only.
+async function createFirstTestGroupOnce() {
+  if (process.env.CREATE_TEST_GROUP_ONCE !== 'true') return;
+  const email = (process.env.FIRST_ADMIN_EMAIL || '').trim().toLowerCase();
+  if (!email) throw new Error('CREATE_TEST_GROUP_ONCE requires FIRST_ADMIN_EMAIL.');
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(745173)');
+    const { rows: admins } = await client.query(
+      "SELECT id, name, email FROM members WHERE email=$1 AND role='admin' AND status='active'",
+      [email]
+    );
+    if (admins.length !== 1) throw new Error('Test group aborted: active test administrator not found.');
+    const { rows: accounts } = await client.query(
+      `INSERT INTO identity_accounts (email, display_name)
+       VALUES ($1,$2) ON CONFLICT DO NOTHING RETURNING id`,
+      [email, admins[0].name]
+    );
+    let accountId = accounts[0]?.id;
+    if (!accountId) {
+      const { rows } = await client.query(
+        'SELECT id FROM identity_accounts WHERE lower(email)=$1', [email]
+      );
+      if (rows.length !== 1) throw new Error('Test identity lookup failed.');
+      accountId = rows[0].id;
+    }
+    // Existing admin email has NOT been verified in the new identity system.
+    const { rows: existing } = await client.query(
+      "SELECT id FROM group_spaces WHERE created_by=$1 AND group_name='Provgruppen' FOR UPDATE",
+      [accountId]
+    );
+    let groupId = existing[0]?.id;
+    if (!groupId) {
+      const { rows } = await client.query(
+        `INSERT INTO group_spaces (group_name, created_by, state)
+         VALUES ('Provgruppen',$1,'provisional') RETURNING id`, [accountId]
+      );
+      groupId = rows[0].id;
+    }
+    await client.query(
+      `INSERT INTO group_memberships (group_id,account_id,role,status)
+       VALUES ($1,$2,'admin','active') ON CONFLICT (group_id,account_id) DO NOTHING`,
+      [groupId,accountId]
+    );
+    await client.query('COMMIT');
+    console.log('Test identity and provisional group ready; one admin membership linked.');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 // Bootstrap the first administrator if this installation has no administrator yet.
 // Existing members, applications, posts and comments are never changed.
 // Credentials are supplied ONLY via the TEST service's Render environment.
@@ -724,6 +780,7 @@ try {
   }
 
   await bootstrapFirstAdmin();
+  await createFirstTestGroupOnce();
 
   // Tillfällig engångsåterställning. Aktiveras enbart med explicit Render-variabel.
   if (process.env.RESET_FIRST_ADMIN_PASSWORD === 'true') {
