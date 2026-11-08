@@ -138,6 +138,59 @@ async function initialize() {
     'Nyheter, bilder och samtal mellan grannar – utan annonser.',
     'Ett privat samtalsforum för oss i Stockevik.')
     ON CONFLICT (association_id) DO NOTHING`);
+  // FUTURE MULTI-GROUP IDENTITY SCHEMA - step 1 (unused by existing routes)
+  // Only creates new tables. Existing members, sessions, posts and settings remain untouched.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS identity_accounts (
+      id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      email TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      email_verified_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      CHECK (char_length(email) BETWEEN 3 AND 180),
+      CHECK (char_length(display_name) BETWEEN 1 AND 100)
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS identity_accounts_email_unique
+      ON identity_accounts (lower(email));
+
+    CREATE TABLE IF NOT EXISTS group_spaces (
+      id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      group_name TEXT NOT NULL CHECK (char_length(group_name) BETWEEN 1 AND 100),
+      plan TEXT NOT NULL DEFAULT 'free' CHECK (plan IN ('free', 'paid')),
+      state TEXT NOT NULL DEFAULT 'provisional'
+        CHECK (state IN ('provisional', 'active', 'suspended', 'closed')),
+      created_by BIGINT NOT NULL REFERENCES identity_accounts(id),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
+    CREATE TABLE IF NOT EXISTS group_memberships (
+      group_id BIGINT NOT NULL REFERENCES group_spaces(id) ON DELETE CASCADE,
+      account_id BIGINT NOT NULL REFERENCES identity_accounts(id) ON DELETE CASCADE,
+      role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('member', 'admin')),
+      status TEXT NOT NULL DEFAULT 'active'
+        CHECK (status IN ('invited', 'active', 'left', 'removed')),
+      joined_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (group_id, account_id)
+    );
+    CREATE INDEX IF NOT EXISTS group_memberships_account
+      ON group_memberships(account_id);
+
+    CREATE TABLE IF NOT EXISTS group_invitations (
+      id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+      group_id BIGINT NOT NULL REFERENCES group_spaces(id) ON DELETE CASCADE,
+      invited_email TEXT NOT NULL,
+      invited_by BIGINT NOT NULL REFERENCES identity_accounts(id),
+      token_hash CHAR(64) NOT NULL UNIQUE,
+      expires_at TIMESTAMPTZ NOT NULL,
+      accepted_at TIMESTAMPTZ,
+      revoked_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      CHECK (char_length(invited_email) BETWEEN 3 AND 180)
+    );
+    CREATE INDEX IF NOT EXISTS group_invitations_group
+      ON group_invitations(group_id);
+  `);
+
   // Each post can have one compressed JPEG, stored durably in PostgreSQL.
   await pool.query('ALTER TABLE posts ADD COLUMN IF NOT EXISTS image_data BYTEA;');
   // Safe migration from v0.6. Existing members, posts and comments are retained.
