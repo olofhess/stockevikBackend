@@ -1,5 +1,5 @@
 'use strict';
-// Version 15. The web page is served by the Stockevik backend on the SAME origin.
+// Lillachatten version 17. The web page and API share one origin.
 // Authentication and member identities are controlled by the server, never by localStorage.
 const $ = id => document.getElementById(id);
 const newMemberEmail = new URLSearchParams(location.search).get('registered');
@@ -53,7 +53,7 @@ async function api(path, method='GET', data) {
       body: data === undefined ? undefined : JSON.stringify(data)
     });
   } catch {
-    throw new Error('Ingen kontakt med Stockeviks server. Försök igen.');
+    throw new Error('Ingen kontakt med Lillachattens server. Försök igen.');
   }
   let result = {};
   try { result = await response.json(); } catch {}
@@ -507,7 +507,7 @@ $('loginForm').onsubmit = async event => {
     try {
       confirmed = await api('/me');
     } catch (verifyError) {
-      throw new Error('Lösenordet godkändes, men sessionen sparades inte i webbläsaren. Kontrollera att sidan öppnas på stockevikbackend.onrender.com och att cookies tillåts. (' + verifyError.message + ')');
+      throw new Error('Lösenordet godkändes, men sessionen sparades inte i webbläsaren. Kontrollera att sidan öppnas på lillachatten.se och att cookies tillåts. (' + verifyError.message + ')');
     }
     currentMember = confirmed.member;
     $('loginPassword').value = '';

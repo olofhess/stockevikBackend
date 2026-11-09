@@ -27,7 +27,7 @@ app.use(helmet({
 app.use(express.json({ limit: '550kb' }));
 app.use(cookieParser());
 const production = process.env.NODE_ENV === 'production';
-const cookieName = 'stockevik_session';
+const cookieName = 'lillachatten_session';
 const sessionHours = 24 * 7;
 const allowedOrigin = process.env.FRONTEND_ORIGIN?.replace(/\/$/, '') || '';
 
@@ -131,20 +131,12 @@ async function initialize() {
     about_text TEXT NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`);
-  // Existing association names remain configured on upgrade; a new database starts unnamed.
+  // A fresh installation starts without an association name.
   await pool.query('ALTER TABLE association_settings ADD COLUMN IF NOT EXISTS configured_at TIMESTAMPTZ;');
-  await pool.query(`UPDATE association_settings SET configured_at=COALESCE(configured_at,updated_at)
-    WHERE configured_at IS NULL AND association_name <> '' AND association_id <> 'local'`);
-  await pool.query(`UPDATE association_settings SET association_id='local'
-    WHERE association_id='stockevik' AND NOT EXISTS
-      (SELECT 1 FROM association_settings WHERE association_id='local')`);
   await pool.query(`INSERT INTO association_settings
     (association_id,association_name,app_title,tagline,welcome_title,welcome_text,about_text)
     VALUES ('local','','Lillachatten','En privat mötesplats','','','')
     ON CONFLICT (association_id) DO NOTHING`);
-  // Legacy named installation was already configured before this column was added.
-  await pool.query(`UPDATE association_settings SET configured_at=COALESCE(configured_at,updated_at)
-    WHERE association_id='local' AND association_name <> ''`);
   // One installation, one association, one invitation process.
   // Older group tables are deliberately left untouched for recoverability.
   await pool.query(`CREATE TABLE IF NOT EXISTS member_invitations (
@@ -159,24 +151,6 @@ async function initialize() {
   );
   CREATE INDEX IF NOT EXISTS member_invitations_email
     ON member_invitations(lower(invited_email));`);
-  // Preserve outstanding links created by the previous implementation.
-  // This migration is idempotent; legacy tables and member data are not removed.
-  const legacyTables = await pool.query(`SELECT
-    to_regclass('public.group_invitations') AS invites,
-    to_regclass('public.identity_accounts') AS accounts,
-    to_regclass('public.group_invitations') AS invitations`);
-  if (legacyTables.rows[0].invites && legacyTables.rows[0].accounts && legacyTables.rows[0].invitations) {
-    await pool.query(`INSERT INTO member_invitations
-      (invited_email,invited_by,token_hash,expires_at,accepted_at,revoked_at,created_at)
-      SELECT gi.invited_email,m.id,gi.token_hash,gi.expires_at,
-             gi.accepted_at,gi.revoked_at,gi.created_at
-      FROM group_invitations gi
-      JOIN identity_accounts ia ON ia.id=gi.invited_by
-      JOIN members m ON lower(m.email)=lower(ia.email)
-      WHERE lower(m.email)='admin@forening.test'
-      ON CONFLICT(token_hash) DO NOTHING`);
-  }
-
   // Each post can have one compressed JPEG, stored durably in PostgreSQL.
   await pool.query('ALTER TABLE posts ADD COLUMN IF NOT EXISTS image_data BYTEA;');
   // Safe migration from v0.6. Existing members, posts and comments are retained.
@@ -232,7 +206,7 @@ async function authenticate(req, res, next) {
 }
 
 app.get('/api/health', async (_req, res, next) => {
-  try {await pool.query('SELECT 1'); res.json({ok:true, app:'Det hÃ¤nder i Stockevik', version:'backend-1.0'});}
+  try {await pool.query('SELECT 1'); res.json({ok:true, app:'Lillachatten', version:'17'});}
   catch(err){next(err);}
 });
 
@@ -752,5 +726,5 @@ try {
   await initialize();
   await ensureSingleAdministrator();
   const port=Number(process.env.PORT || 10000);
-  app.listen(port,'0.0.0.0',()=>console.log(`Stockevik backend listening on ${port}`));
+  app.listen(port,'0.0.0.0',()=>console.log(`Lillachatten listening on ${port}`));
 } catch(err){console.error('Startup failed:',err);process.exit(1);}
