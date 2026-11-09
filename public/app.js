@@ -1,7 +1,17 @@
 'use strict';
-// Version 1.0. The web page is served by the Stockevik backend on the SAME origin.
+// Version 15. The web page is served by the Stockevik backend on the SAME origin.
 // Authentication and member identities are controlled by the server, never by localStorage.
 const $ = id => document.getElementById(id);
+const newMemberEmail = new URLSearchParams(location.search).get('registered');
+if (newMemberEmail) {
+  history.replaceState(null, '', location.pathname);
+  document.addEventListener('DOMContentLoaded', () => {
+    $('loginEmail').value = newMemberEmail;
+    $('loginError').textContent = 'Registreringen är klar. Välkommen! Ange ditt lösenord och logga in.';
+    $('loginPassword').focus();
+  });
+}
+
 let currentMember = null;
 let posts = [];
 let members = [];
@@ -63,18 +73,19 @@ function showSession() {
   $('settingsTab').classList.toggle('hide', !signedIn || currentMember.role !== 'admin');
   if (signedIn) { $('avatarRemove').classList.toggle('hide', !currentMember.avatarVersion); renderProfile(); }
   if (!signedIn) $('avatarStatus').textContent = '';
-  if (signedIn) $('registrationView').classList.add('hide');
+
 }
 function view(tab) {
   if (['admin','settings'].includes(tab) && currentMember?.role !== 'admin') tab='feed';
-  for (const t of ['feed','members','profile','admin','settings']) {
+  if (currentMember?.role === 'admin' && associationProfile && !associationProfile.configured) tab='setup';
+  for (const t of ['feed','members','profile','admin','settings','setup']) {
     $(t+'View').classList.toggle('hide',t!==tab);
-    $(t+'Tab').classList.toggle('active',t===tab);
+    if ($(t+'Tab')) $(t+'Tab').classList.toggle('active',t===tab);
   }
   if (tab === 'members') { loadMembers(); loadAdminMembers(); }
   if (tab === 'profile') renderProfile();
   if (tab === 'feed') loadPosts();
-  if (tab === 'admin') loadApplications();
+
   if (tab === 'settings') fillAssociationForm();
 }
 $('feedTab').onclick = () => view('feed');
@@ -467,60 +478,18 @@ async function loadAdminMembers() {
   } catch(err) { $('adminMembersStatus').textContent=err.message; }
 }
 
-$('registerToggle').onclick=()=>{
-  $('loginView').classList.add('hide');
-  $('registrationView').classList.remove('hide');
-};
-$('registrationBack').onclick=()=>{
-  $('registrationView').classList.add('hide');
-  $('loginView').classList.remove('hide');
-};
-$('registrationForm').onsubmit=async e=>{
-  e.preventDefault();
-  const form=$('registrationForm');
-  const button=form.querySelector('button[type=submit]');
-  const status=$('registrationStatus');
-  status.textContent='Skickar ansökan …'; button.disabled=true;
+$('inviteForm').onsubmit = async event => {
+  event.preventDefault();
+  const button=$('inviteForm').querySelector('button[type="submit"]');
+  const status=$('inviteStatus');
+  status.textContent='Skickar inbjudan …'; button.disabled=true;
   try {
-    const result=await api('/register','POST',{
-      name:$('regName').value, house:$('regHouse').value,
-      email:$('regEmail').value, password:$('regPassword').value
-    });
+    const result=await api('/admin/invitations','POST',{email:$('inviteEmail').value});
     status.textContent=result.message;
-    form.reset();
-  } catch(err) { status.textContent=err.message; }
-  finally { button.disabled=false; }
+    $('inviteForm').reset();
+  } catch(err) {status.textContent=err.message;}
+  finally {button.disabled=false;}
 };
-async function loadApplications() {
-  const host=$('applicationsList');
-  host.replaceChildren();
-  $('adminStatus').textContent='Hämtar ansökningar …';
-  try {
-    const result=await api('/admin/applications');
-    const applications=result.applications||[];
-    $('adminStatus').textContent=applications.length ? '' : 'Inga väntande ansökningar.';
-    for(const a of applications) {
-      const card=element('div','comment');
-      card.append(element('b','',a.name+' · '+a.house));
-      card.append(element('p','',a.email));
-      const actions=element('div','actions');
-      for(const [decision,label] of [['approve','Godkänn'],['reject','Avslå']]) {
-        const button=element('button',decision==='approve'?'btn':'btn subtle',label);
-        button.type='button';
-        button.onclick=async()=>{
-          if(!confirm(`${label} ansökan från ${a.name}?`))return;
-          button.disabled=true;
-          try {
-            await api('/admin/applications/'+a.id+'/decision','POST',{decision});
-            await loadApplications();
-          } catch(err) { alert(err.message); button.disabled=false; }
-        };
-        actions.append(button);
-      }
-      card.append(actions); host.append(card);
-    }
-  } catch(err) { $('adminStatus').textContent=err.message; }
-}
 
 $('loginForm').onsubmit = async event => {
   event.preventDefault();
@@ -543,6 +512,7 @@ $('loginForm').onsubmit = async event => {
     currentMember = confirmed.member;
     $('loginPassword').value = '';
     showSession();
+    await loadAssociation();
     view('feed');
   } catch(e) { error.textContent = e.message; }
   finally { button.disabled = false; }
@@ -563,6 +533,10 @@ function applyAssociation(association) {
   $('associationWelcomeText').textContent = association.welcome_text;
   $('associationAbout').textContent = association.about_text;
   $('associationId').textContent = association.association_id;
+  $('setupTabHint').classList.toggle('hide', association.configured || currentMember?.role !== 'admin');
+  $('tabBar').classList.toggle('hide', !association.configured && currentMember?.role === 'admin');
+  $('setupHeading').textContent = association.configured ? '' : 'Välkommen till Lillachatten';
+  if (currentMember?.role === 'admin' && !association.configured) view('setup');
   document.title = association.app_title + ' · Vår mötesplats';
 }
 function fillAssociationForm() {
@@ -597,6 +571,19 @@ $('associationForm').onsubmit = async event => {
   } catch(error) { status.textContent = error.message; }
   finally { button.disabled = false; }
 };
+$('setupForm').onsubmit=async event=>{
+  event.preventDefault();
+  const button=$('setupForm').querySelector('button[type=submit]');
+  button.disabled=true;
+  $('setupStatus').textContent='Sparar föreningens namn …';
+  try {
+    const result=await api('/admin/association/initialize','POST',{name:$('setupName').value.trim()});
+    applyAssociation(result.association);
+    $('setupStatus').textContent='Föreningen är skapad. Du kan nu skicka den första inbjudan.';
+    view('admin');
+  } catch(err){$('setupStatus').textContent=err.message;}
+  finally{button.disabled=false;}
+};
 loadAssociation();
 
 (async function init() {
@@ -607,7 +594,8 @@ loadAssociation();
     if (currentMember) return;
     currentMember = result.member;
     showSession();
-    await loadPosts();
+    await loadAssociation();
+    view('feed');
   } catch {
     if (!currentMember) showSession();
   }

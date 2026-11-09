@@ -1,3 +1,41 @@
 <!doctype html>
-<html lang="sv"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Acceptera inbjudan · Lilla Chatten</title><link rel="stylesheet" href="/invitation.css"><script src="/accept-invitation.js" defer></script></head>
-<body><main><h1>Välkommen till Lilla Chatten</h1><p id="description">Kontrollerar inbjudan…</p><form id="acceptForm" hidden><label for="email">E-post</label><input id="email" type="text" readonly><label for="name">Ditt namn</label><input id="name" maxlength="100" autocomplete="name" required><label for="house">Bostad / fastighet</label><input id="house" maxlength="100" required><label for="password">Välj lösenord (minst 12 tecken)</label><input id="password" type="password" minlength="12" autocomplete="new-password" required><button id="accept" type="submit">Skapa konto</button></form><p id="status" role="status"></p><p><a href="/">Tillbaka till Lilla Chatten</a></p></main></body></html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Inbjudan till Lillachatten</title>
+<style>
+*{box-sizing:border-box}body{font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f6f8f7;color:#243947;margin:0;padding:24px 14px}main{max-width:490px;margin:35px auto;background:#fff;padding:28px;border:1px solid #dce5e5;border-radius:14px;box-shadow:0 5px 22px #2746530b}h1{font-family:Georgia,serif;font-size:28px;color:#1d5264;margin:0 0 12px}label{display:block;font-weight:650;margin:14px 0 5px}input{width:100%;border:1px solid #cbd9da;border-radius:9px;padding:11px;font:inherit;min-height:44px}button{background:#24697b;color:white;border:0;border-radius:9px;padding:12px 17px;font:inherit;font-weight:650;cursor:pointer;min-height:44px}button.secondary{background:#fff;border:1px solid #cbdcde;color:#24697b}button:disabled{opacity:.55}.buttons{display:flex;gap:10px;flex-wrap:wrap}.hide{display:none!important}.small{color:#526e78;font-size:14px}.important{font-weight:700;padding:11px;background:#eaf2f2;border-left:3px solid #24697b}.error{color:#a22}a{color:#24697b}
+</style>
+</head>
+<body>
+<main>
+<h1>Lillachatten</h1>
+<div id="loading" role="status">Kontrollerar din inbjudan …</div>
+<section id="decision" class="hide">
+  <h2>Du är inbjuden</h2>
+  <p>Du har fått en personlig inbjudan att bli medlem i Lillachatten.</p>
+  <p class="small" id="emailInfo"></p>
+  <p>Vill du gå med?</p>
+  <div class="buttons"><button id="yes" type="button">Ja, jag vill gå med</button><button id="no" class="secondary" type="button">Nej, tack</button></div>
+</section>
+<section id="signup" class="hide">
+  <h2>Din anmälan har tagits emot</h2>
+  <p>Fyll i dina uppgifter för att slutföra medlemskapet.</p>
+  <form id="signupForm">
+    <label for="name">Namn</label><input id="name" autocomplete="name" maxlength="100" required>
+    <label for="house">Bostad / fastighet</label><input id="house" maxlength="100" required>
+    <label for="email">E-postadress</label><input id="email" type="email" readonly>
+    <label for="password">Välj lösenord (minst 12 tecken)</label><input id="password" type="password" autocomplete="new-password" minlength="12" maxlength="200" required>
+    <label for="confirm">Upprepa lösenordet</label><input id="confirm" type="password" autocomplete="new-password" minlength="12" maxlength="200" required>
+    <p class="important">Utan lösenord går det inte att logga in.</p>
+    <button type="submit" id="submit">Slutför registreringen</button>
+  </form>
+</section>
+<section id="done" class="hide"><h2 id="doneHeading"></h2><p id="doneText"></p><a id="loginLink" href="/" class="hide">Gå till inloggning</a></section>
+<p id="error" role="alert" class="error"></p>
+</main>
+<script src="/accept-invitation.js" defer></script>
+</body>
+</html>

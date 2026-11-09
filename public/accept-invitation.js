@@ -1,31 +1,12 @@
 'use strict';
-const $ = id => document.getElementById(id);
-const match=/^#token=([a-f0-9]{64})$/.exec(location.hash);
-const token=match?.[1];
-// Remove the secret from the visible URL and browser history immediately.
-if(token) history.replaceState(null,'',location.pathname);
-async function api(url,payload){
- const r=await fetch(url,{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
- const data=await r.json().catch(()=>({}));
- if(!r.ok) throw new Error(data.error || `Serverfel (${r.status})`);
- return data;
-}
-(async()=>{
- if(!token){$('description').textContent='Inbjudningslänken saknar en giltig kod.';return;}
- try{
-  const invitation=await api('/api/invitations/preview',{token});
-  $('description').textContent=`Du är inbjuden till ${invitation.groupName}.`;
-  $('email').value=invitation.email;
-  $('acceptForm').hidden=false;
- }catch(err){$('description').textContent=err.message;}
-})();
-$('acceptForm').addEventListener('submit',async e=>{
- e.preventDefault();$('accept').disabled=true;$('status').textContent='Skapar konto…';
- try{
-  const result=await api('/api/invitations/accept',{
-   token,name:$('name').value.trim(),house:$('house').value.trim(),password:$('password').value
-  });
-  $('acceptForm').hidden=true;
-  $('status').textContent=result.message+' Gå till startsidan och logga in.';
- }catch(err){$('status').textContent=err.message;$('accept').disabled=false;}
-});
+const $=id=>document.getElementById(id);
+const token=new URLSearchParams(location.hash.slice(1)).get('token')||'';
+// Keep token in memory only and remove it from browser history once loaded.
+history.replaceState(null,'',location.pathname);
+let email='';
+async function api(path,body){const response=await fetch('/api/invitations/'+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),credentials:'same-origin'});const data=await response.json().catch(()=>({}));if(!response.ok)throw Error(data.error||'Ett fel uppstod.');return data;}
+function show(id){for(const section of ['loading','decision','signup','done'])$(section).classList.toggle('hide',section!==id);$('error').textContent='';}
+(async()=>{try{const data=await api('preview',{token});email=data.email;$('emailInfo').textContent='Inbjudan gäller: '+email;show('decision');}catch(err){show('done');$('doneHeading').textContent='Inbjudan kan inte användas';$('doneText').textContent=err.message;}})();
+$('yes').onclick=()=>{show('signup');$('email').value=email;$('name').focus();};
+$('no').onclick=async()=>{try{await api('decline',{token});show('done');$('doneHeading').textContent='Du har avstått';$('doneText').textContent='Din inbjudan är avslutad.';}catch(err){$('error').textContent=err.message;}};
+$('signupForm').onsubmit=async e=>{e.preventDefault();$('error').textContent='';if($('password').value!==$('confirm').value){$('error').textContent='Lösenorden stämmer inte överens.';return;}const button=$('submit');button.disabled=true;try{const result=await api('accept',{token,name:$('name').value,house:$('house').value,password:$('password').value});show('done');$('doneHeading').textContent='Välkommen till Lillachatten!';$('doneText').textContent='Din registrering är klar. Du går nu direkt till inloggning.';$('loginLink').classList.remove('hide');const target='/?registered='+encodeURIComponent(result.email);location.replace(target);}catch(err){$('error').textContent=err.message;}finally{button.disabled=false;}};

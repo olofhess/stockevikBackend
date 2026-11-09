@@ -131,65 +131,51 @@ async function initialize() {
     about_text TEXT NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
   )`);
+  // Existing association names remain configured on upgrade; a new database starts unnamed.
+  await pool.query('ALTER TABLE association_settings ADD COLUMN IF NOT EXISTS configured_at TIMESTAMPTZ;');
+  await pool.query(`UPDATE association_settings SET configured_at=COALESCE(configured_at,updated_at)
+    WHERE configured_at IS NULL AND association_name <> '' AND association_id <> 'local'`);
+  await pool.query(`UPDATE association_settings SET association_id='local'
+    WHERE association_id='stockevik' AND NOT EXISTS
+      (SELECT 1 FROM association_settings WHERE association_id='local')`);
   await pool.query(`INSERT INTO association_settings
     (association_id,association_name,app_title,tagline,welcome_title,welcome_text,about_text)
-    VALUES ('stockevik','Stockeviks samhällsförening','Det händer i Stockevik',
-    'Vår egen mötesplats · utan annonser','Välkommen till vår mötesplats!',
-    'Nyheter, bilder och samtal mellan grannar – utan annonser.',
-    'Ett privat samtalsforum för oss i Stockevik.')
+    VALUES ('local','','Lillachatten','En privat mötesplats','','','')
     ON CONFLICT (association_id) DO NOTHING`);
-  // FUTURE MULTI-GROUP IDENTITY SCHEMA - step 1 (unused by existing routes)
-  // Only creates new tables. Existing members, sessions, posts and settings remain untouched.
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS identity_accounts (
-      id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-      email TEXT NOT NULL,
-      display_name TEXT NOT NULL,
-      email_verified_at TIMESTAMPTZ,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      CHECK (char_length(email) BETWEEN 3 AND 180),
-      CHECK (char_length(display_name) BETWEEN 1 AND 100)
-    );
-    CREATE UNIQUE INDEX IF NOT EXISTS identity_accounts_email_unique
-      ON identity_accounts (lower(email));
-
-    CREATE TABLE IF NOT EXISTS group_spaces (
-      id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-      group_name TEXT NOT NULL CHECK (char_length(group_name) BETWEEN 1 AND 100),
-      plan TEXT NOT NULL DEFAULT 'free' CHECK (plan IN ('free', 'paid')),
-      state TEXT NOT NULL DEFAULT 'provisional'
-        CHECK (state IN ('provisional', 'active', 'suspended', 'closed')),
-      created_by BIGINT NOT NULL REFERENCES identity_accounts(id),
-      created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-    );
-
-    CREATE TABLE IF NOT EXISTS group_memberships (
-      group_id BIGINT NOT NULL REFERENCES group_spaces(id) ON DELETE CASCADE,
-      account_id BIGINT NOT NULL REFERENCES identity_accounts(id) ON DELETE CASCADE,
-      role TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('member', 'admin')),
-      status TEXT NOT NULL DEFAULT 'active'
-        CHECK (status IN ('invited', 'active', 'left', 'removed')),
-      joined_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      PRIMARY KEY (group_id, account_id)
-    );
-    CREATE INDEX IF NOT EXISTS group_memberships_account
-      ON group_memberships(account_id);
-
-    CREATE TABLE IF NOT EXISTS group_invitations (
-      id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-      group_id BIGINT NOT NULL REFERENCES group_spaces(id) ON DELETE CASCADE,
-      invited_email TEXT NOT NULL,
-      invited_by BIGINT NOT NULL REFERENCES identity_accounts(id),
-      token_hash CHAR(64) NOT NULL UNIQUE,
-      expires_at TIMESTAMPTZ NOT NULL,
-      accepted_at TIMESTAMPTZ,
-      revoked_at TIMESTAMPTZ,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-      CHECK (char_length(invited_email) BETWEEN 3 AND 180)
-    );
-    CREATE INDEX IF NOT EXISTS group_invitations_group
-      ON group_invitations(group_id);
-  `);
+  // Legacy named installation was already configured before this column was added.
+  await pool.query(`UPDATE association_settings SET configured_at=COALESCE(configured_at,updated_at)
+    WHERE association_id='local' AND association_name <> ''`);
+  // One installation, one association, one invitation process.
+  // Older group tables are deliberately left untouched for recoverability.
+  await pool.query(`CREATE TABLE IF NOT EXISTS member_invitations (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    invited_email TEXT NOT NULL CHECK(char_length(invited_email) BETWEEN 3 AND 180),
+    invited_by BIGINT NOT NULL REFERENCES members(id),
+    token_hash CHAR(64) NOT NULL UNIQUE,
+    expires_at TIMESTAMPTZ NOT NULL,
+    accepted_at TIMESTAMPTZ,
+    revoked_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  );
+  CREATE INDEX IF NOT EXISTS member_invitations_email
+    ON member_invitations(lower(invited_email));`);
+  // Preserve outstanding links created by the previous implementation.
+  // This migration is idempotent; legacy tables and member data are not removed.
+  const legacyTables = await pool.query(`SELECT
+    to_regclass('public.group_invitations') AS invites,
+    to_regclass('public.identity_accounts') AS accounts,
+    to_regclass('public.group_invitations') AS invitations`);
+  if (legacyTables.rows[0].invites && legacyTables.rows[0].accounts && legacyTables.rows[0].invitations) {
+    await pool.query(`INSERT INTO member_invitations
+      (invited_email,invited_by,token_hash,expires_at,accepted_at,revoked_at,created_at)
+      SELECT gi.invited_email,m.id,gi.token_hash,gi.expires_at,
+             gi.accepted_at,gi.revoked_at,gi.created_at
+      FROM group_invitations gi
+      JOIN identity_accounts ia ON ia.id=gi.invited_by
+      JOIN members m ON lower(m.email)=lower(ia.email)
+      WHERE lower(m.email)='admin@forening.test'
+      ON CONFLICT(token_hash) DO NOTHING`);
+  }
 
   // Each post can have one compressed JPEG, stored durably in PostgreSQL.
   await pool.query('ALTER TABLE posts ADD COLUMN IF NOT EXISTS image_data BYTEA;');
@@ -198,149 +184,39 @@ async function initialize() {
     ALTER TABLE members ADD CONSTRAINT members_status_check CHECK (status IN ('active','inactive','pending'));`);
 }
 
-// Temporary, explicit test-only seed. No emails sent, no existing logins changed.
-// Enable CREATE_TEST_GROUP_ONCE=true in the TEST Render service for one deploy only.
-async function createFirstTestGroupOnce() {
-  if (process.env.CREATE_TEST_GROUP_ONCE !== 'true') return;
+// A single fixed administrator. Other accounts are preserved as ordinary members,
+// including their posts; their old administrator sessions are invalidated.
+const administratorEmail = 'admin@forening.test';
+async function ensureSingleAdministrator() {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    await client.query('SELECT pg_advisory_xact_lock(745173)');
-    // The test database must have exactly one active administrator.
-    // Do not depend on FIRST_ADMIN_EMAIL: bootstrap settings may differ from the existing account.
-    const { rows: admins } = await client.query(
-      "SELECT id, name, email FROM members WHERE role='admin' AND status='active'"
-    );
-    if (admins.length !== 1) throw new Error('Test group aborted: expected exactly one active administrator.');
-    const email = admins[0].email.trim().toLowerCase();
-    const { rows: accounts } = await client.query(
-      `INSERT INTO identity_accounts (email, display_name)
-       VALUES ($1,$2) ON CONFLICT DO NOTHING RETURNING id`,
-      [email, admins[0].name]
-    );
-    let accountId = accounts[0]?.id;
-    if (!accountId) {
-      const { rows } = await client.query(
-        'SELECT id FROM identity_accounts WHERE lower(email)=$1', [email]
-      );
-      if (rows.length !== 1) throw new Error('Test identity lookup failed.');
-      accountId = rows[0].id;
-    }
-    // Existing admin email has NOT been verified in the new identity system.
-    const { rows: existing } = await client.query(
-      "SELECT id FROM group_spaces WHERE created_by=$1 AND group_name='Provgruppen' FOR UPDATE",
-      [accountId]
-    );
-    let groupId = existing[0]?.id;
-    if (!groupId) {
-      const { rows } = await client.query(
-        `INSERT INTO group_spaces (group_name, created_by, state)
-         VALUES ('Provgruppen',$1,'provisional') RETURNING id`, [accountId]
-      );
-      groupId = rows[0].id;
-    }
-    await client.query(
-      `INSERT INTO group_memberships (group_id,account_id,role,status)
-       VALUES ($1,$2,'admin','active') ON CONFLICT (group_id,account_id) DO NOTHING`,
-      [groupId,accountId]
-    );
-    await client.query('COMMIT');
-    console.log('Test identity and provisional group ready; one admin membership linked.');
-  } catch (error) {
-    await client.query('ROLLBACK');
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
-// Bootstrap the first administrator if this installation has no administrator yet.
-// Existing members, applications, posts and comments are never changed.
-// Credentials are supplied ONLY via the TEST service's Render environment.
-async function bootstrapFirstAdmin() {
-  const email = (process.env.FIRST_ADMIN_EMAIL || '').trim().toLowerCase();
-  const name = (process.env.FIRST_ADMIN_NAME || '').trim();
-  const password = process.env.FIRST_ADMIN_PASSWORD || '';
-  const house = (process.env.FIRST_ADMIN_HOUSE || '').trim() || 'Föreningens administratör';
-  if (!email && !name && !password) return;
-  if (!email || !name || !password ||
-      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ||
-      email.length > 180 || name.length > 100 || house.length > 100 ||
-      password.length < 12 || password.length > 200) {
-    throw new Error('FIRST_ADMIN_EMAIL, FIRST_ADMIN_NAME och FIRST_ADMIN_PASSWORD (minst 12 tecken) måste anges korrekt.');
-  }
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    // Prevent simultaneous startups from creating multiple administrators.
     await client.query('SELECT pg_advisory_xact_lock(745169)');
-    const {rows:admins} = await client.query("SELECT id FROM members WHERE role='admin' LIMIT 1");
-    if (admins.length) {
-      console.log('First administrator bootstrap skipped: an administrator already exists.');
-      await client.query('COMMIT');
-      return;
+    const {rows} = await client.query('SELECT id FROM members WHERE lower(email)=$1 FOR UPDATE', [administratorEmail]);
+    let adminId = rows[0]?.id;
+    if (!adminId) {
+      const password = process.env.FIRST_ADMIN_PASSWORD || '';
+      if (password.length < 12 || password.length > 200) {
+        throw new Error('Skapa admin@forening.test: ange FIRST_ADMIN_PASSWORD (12–200 tecken) i Render.');
+      }
+      const passwordHash = await bcrypt.hash(password,12);
+      const created = await client.query(`INSERT INTO members
+        (name,house,username,email,password_hash,status,role)
+        VALUES ('Administratör','Föreningen',$1,$2,$3,'active','member') RETURNING id`,
+        ['admin_'+randomBytes(8).toString('hex'),administratorEmail,passwordHash]);
+      adminId = created.rows[0].id;
     }
-    // Never modify an existing member who happens to have the requested email.
-    const {rows:existing} = await client.query('SELECT id FROM members WHERE email=$1', [email]);
-    if (existing.length) {
-      throw new Error('FIRST_ADMIN_EMAIL is already registered. Choose a different email; existing members were not changed.');
-    }
-    const hash = await bcrypt.hash(password, 12);
-    const username = 'admin_' + randomBytes(8).toString('hex');
-    await client.query(`INSERT INTO members(name, house, username, email, password_hash, status, role)
-      VALUES($1,$2,$3,$4,$5,'active','admin')`,
-      [name, house, username, email, hash]);
+    // Only remove elevated permissions; never delete users or content.
+    const {rows: demoted} = await client.query(`UPDATE members SET role='member'
+      WHERE role='admin' AND id<>$1 RETURNING id`,[adminId]);
+    if (demoted.length) await client.query('DELETE FROM sessions WHERE member_id = ANY($1::bigint[])',
+      [demoted.map(m=>m.id)]);
+    await client.query("UPDATE members SET role='admin',status='active' WHERE id=$1",[adminId]);
     await client.query('COMMIT');
-    console.log('First administrator account created; existing members preserved.');
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally { client.release(); }
-}
-
-async function seedOnlyForDemo() {
-  if (process.env.SEED_DEMO !== 'true') return;
-  const credentials = [
-    ['Kalle', 'Kalles Stuga', 'kalle@stockevik.test', process.env.KALLE_PASSWORD],
-    ['Olle', 'Olles Stuga', 'olle@stockevik.test', process.env.OLLE_PASSWORD],
-    ['Johan', 'Johans Stuga', 'johan@stockevik.test', process.env.JOHAN_PASSWORD]
-  ];
-  if (credentials.some(x => !x[3] || x[3].length < 12)) {
-    throw new Error('SEED_DEMO requires three independent passwords of at least 12 characters.');
-  }
-  for (const [name, house, email, password] of credentials) {
-    const hash = await bcrypt.hash(password, 12);
-    await pool.query(`INSERT INTO members (name, house, username, email, password_hash)
-      VALUES ($1,$2,$3,$4,$5) ON CONFLICT (email) DO NOTHING`, [name, house, name.toLowerCase(), email, hash]);
-  }
-  console.log('Demo accounts checked (existing accounts left unchanged).');
-}
-
-// One-time administrator-triggered repair of the existing Kalle demo account.
-// Enable RESET_KALLE_PASSWORD=true in Render for one deploy, then remove it.
-async function resetKallePasswordOnce() {
-  if (process.env.RESET_KALLE_PASSWORD !== 'true') return;
-  const password = process.env.KALLE_PASSWORD;
-  if (!password || password.length < 12) {
-    throw new Error('RESET_KALLE_PASSWORD requires KALLE_PASSWORD of at least 12 characters.');
-  }
-  const passwordHash = await bcrypt.hash(password, 12);
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    const {rows} = await client.query(`UPDATE members
-      SET password_hash=$1, status='active'
-      WHERE email=$2 RETURNING id`, [passwordHash, 'kalle@stockevik.test']);
-    if (rows.length !== 1) throw new Error('Kalle demo account not found: reset aborted.');
-    await client.query('DELETE FROM sessions WHERE member_id=$1', [rows[0].id]);
-    await client.query('COMMIT');
-    console.log('Kalle demo password reset; existing Kalle sessions cleared.');
-  } catch (err) {
-    await client.query('ROLLBACK');
-    throw err;
-  } finally {
-    client.release();
-  }
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS members_only_one_admin
+      ON members ((role)) WHERE role='admin'`);
+  } catch(err) { await client.query('ROLLBACK').catch(()=>{}); throw err; }
+  finally { client.release(); }
 }
 
 async function authenticate(req, res, next) {
@@ -608,40 +484,41 @@ app.get('/api/members', authenticate, async (req, res, next) => {
 });
 
 
-// Requests are public; approval is always a separate administrator action.
-app.post('/api/register', registrationLimiter, async (req,res,next) => {
-  try {
-    const name = safeText(req.body?.name,100);
-    const house = safeText(req.body?.house,100);
-    const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
-    const password = typeof req.body?.password === 'string' ? req.body.password : '';
-    if (!name || !house || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 180 || password.length < 8 || password.length > 200) {
-      return res.status(400).json({error:'Ange namn, fastighet, giltig e-post och lÃ¶senord med minst 8 tecken.'});
-    }
-    // A server-generated internal username is never used as a credential.
-    const username = 'medlem_' + randomBytes(12).toString('hex');
-    const hash = await bcrypt.hash(password,12);
-    await pool.query(`INSERT INTO members(name,house,username,email,password_hash,status,role)
-      VALUES($1,$2,$3,$4,$5,'pending','member') ON CONFLICT(email) DO NOTHING`,
-      [name,house,username,email,hash]);
-    res.status(202).json({message:'Din ansÃ¶kan Ã¤r mottagen. Du kan logga in nÃ¤r en administratÃ¶r har godkÃ¤nt den.'});
-  } catch(err){next(err);}
-});
+// Self-registration is disabled. Only a one-use invitation can create an account.
+app.post('/api/register', (_req,res) => res.status(403).json({error:'Medlemskap kräver en personlig inbjudan.'}));
 
 function requireAdmin(req,res,next) {
-  if (req.member.role !== 'admin') return res.status(403).json({error:'Endast administratÃ¶ren har tillgÃ¥ng.'});
+  if (req.member.role !== 'admin' || req.member.email.toLowerCase() !== administratorEmail) return res.status(403).json({error:'Endast administratÃ¶ren har tillgÃ¥ng.'});
   next();
 }
 // Association profile. No access to member data, and only administrators may edit text.
-const associationId = 'stockevik'; // Installation identity; will become deployment configuration later.
+const associationId = 'local'; // Internal single-installation identifier, not the association's name.
 const associationFields = ['association_name','app_title','tagline','welcome_title','welcome_text','about_text'];
 app.get('/api/association', async (_req,res,next) => {
   try {
     const {rows} = await pool.query(`SELECT association_id,association_name,app_title,tagline,
-      welcome_title,welcome_text,about_text FROM association_settings WHERE association_id=$1`,[associationId]);
+      welcome_title,welcome_text,about_text,configured_at FROM association_settings WHERE association_id=$1`,[associationId]);
     if (!rows.length) return res.status(503).json({error:'Föreningsprofilen saknas.'});
     res.set('Cache-Control','no-store');
-    res.json({association:rows[0]});
+    res.json({association:{...rows[0],configured:!!rows[0].configured_at}});
+  } catch(err){next(err);}
+});
+// First action of the sole administrator on a brand-new installation.
+app.post('/api/admin/association/initialize', authenticate, requireAdmin, writeLimiter, async (req,res,next) => {
+  try {
+    const name=safeText(req.body?.name,180);
+    if (!name) return res.status(400).json({error:'Ange föreningens namn.'});
+    const {rows}=await pool.query(`UPDATE association_settings SET association_name=$2,
+      app_title=$2,tagline='Vår egen mötesplats · utan annonser',
+      welcome_title='Välkommen till ' || $2 || '!',
+      welcome_text='Nyheter, bilder och samtal mellan medlemmarna – utan annonser.',
+      about_text='En privat mötesplats för medlemmarna i ' || $2 || '.',
+      configured_at=now(),updated_at=now()
+      WHERE association_id=$1 AND configured_at IS NULL
+      RETURNING association_id,association_name,app_title,tagline,welcome_title,welcome_text,about_text,configured_at`,
+      [associationId,name]);
+    if (!rows.length) return res.status(409).json({error:'Föreningen har redan fått ett namn.'});
+    res.json({association:{...rows[0],configured:true}});
   } catch(err){next(err);}
 });
 app.put('/api/admin/association', authenticate, requireAdmin, writeLimiter, async (req,res,next) => {
@@ -687,13 +564,13 @@ app.put('/api/admin/members/:id', authenticate, requireAdmin, writeLimiter, asyn
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-      const {rows:original} = await client.query(`SELECT id,role,status FROM members
+      const {rows:original} = await client.query(`SELECT id,role,status,email FROM members
         WHERE id=$1 AND status <> 'pending' FOR UPDATE`, [req.params.id]);
       if (!original.length) { await client.query('ROLLBACK'); return res.status(404).json({error:'Medlemmen hittades inte.'}); }
       // Administrator accounts must never be disabled via this editor.
-      if (original[0].role === 'admin' && status !== 'active') {
+      if (original[0].role === 'admin' && (status !== 'active' || email !== administratorEmail)) {
         await client.query('ROLLBACK');
-        return res.status(403).json({error:'Administratörskonton kan inte inaktiveras här.'});
+        return res.status(403).json({error:'Administratörens e-post och status kan inte ändras här.'});
       }
       const {rows} = await client.query(`UPDATE members
         SET name=$2,house=$3,username=$4,email=$5,status=$6 WHERE id=$1
@@ -744,282 +621,123 @@ app.post('/api/admin/members/:id/reset-password', authenticate, requireAdmin, wr
   } catch(err) {next(err);}
 });
 
-app.get('/api/admin/applications', authenticate, requireAdmin, async (_req,res,next) => {
+// An administrator may invite a new member by email. No groups, no approval queue.
+app.post('/api/admin/invitations', authenticate, requireAdmin, writeLimiter, async (req,res,next) => {
+  const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 180)
+    return res.status(400).json({error:'Ange en giltig e-postadress.'});
+  if (email === administratorEmail) return res.status(409).json({error:'Administratören har redan ett konto.'});
+  let ready;
+  try { ready=await pool.query('SELECT configured_at FROM association_settings WHERE association_id=$1',[associationId]); }
+  catch(err) { return next(err); }
+  if (!ready.rows[0]?.configured_at) return res.status(409).json({error:'Ge först föreningen ett namn.'});
+  const client = await pool.connect();
+  let invitationId;
+  let token;
   try {
-    const {rows} = await pool.query(`SELECT id,name,house,email,joined_at FROM members
-       WHERE status='pending' ORDER BY joined_at ASC,id ASC`);
-    res.json({applications:rows});
-  } catch(err){next(err);}
-});
-app.post('/api/admin/applications/:id/decision', authenticate, requireAdmin, writeLimiter, async (req,res,next) => {
-  try {
-    if (!/^\d+$/.test(req.params.id) || !['approve','reject'].includes(req.body?.decision))
-      return res.status(400).json({error:'Ogiltigt beslut.'});
-    const status = req.body.decision === 'approve' ? 'active' : 'inactive';
-    const {rows} = await pool.query(`UPDATE members SET status=$2 WHERE id=$1 AND status='pending'
-      RETURNING id`, [req.params.id,status]);
-    if (!rows.length) return res.status(404).json({error:'AnsÃ¶kan hittades inte eller Ã¤r redan behandlad.'});
-    res.json({ok:true});
-  } catch(err){next(err);}
-});
+    await client.query('BEGIN');
+    // Avoid concurrent invitations for the same address.
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',[email]);
+    const member = await client.query('SELECT id FROM members WHERE lower(email)=$1',[email]);
+    if (member.rowCount) {await client.query('ROLLBACK');return res.status(409).json({error:'Adressen är redan registrerad.'});}
+    await client.query(`UPDATE member_invitations SET revoked_at=now()
+      WHERE lower(invited_email)=$1 AND accepted_at IS NULL AND revoked_at IS NULL`,[email]);
+    token = randomBytes(32).toString('hex');
+    const invitation = await client.query(`INSERT INTO member_invitations
+      (invited_email,invited_by,token_hash,expires_at)
+      VALUES($1,$2,$3,now()+interval '48 hours') RETURNING id`,
+      [email,req.member.id,hashToken(token)]);
+    invitationId = invitation.rows[0].id;
+    await client.query('COMMIT');
+  } catch(err) {await client.query('ROLLBACK').catch(()=>{});return next(err);}
+  finally {client.release();}
 
-// List only the groups administered by the logged-in test account.
-// This endpoint never exposes other members' contact details.
-app.get('/api/my-admin-groups', authenticate, requireAdmin, async (req, res, next) => {
+  // Link always opens the same origin serving the app; no stale hard-coded domain.
+  // Set PUBLIC_BASE_URL on Render if an external canonical hostname is required.
+  const baseUrl = (process.env.PUBLIC_BASE_URL || (!production ? `${req.protocol}://${req.get('host')}` : '')).replace(/\/$/,'');
+  if (!/^https:\/\/[^/]+$/i.test(baseUrl) && production) {
+    await pool.query('UPDATE member_invitations SET revoked_at=now() WHERE id=$1',[invitationId]);
+    return res.status(503).json({error:'Ange PUBLIC_BASE_URL som den offentliga HTTPS-adressen till appen i Render.'});
+  }
+  const url = `${baseUrl}/accept-invitation.html#token=${token}`;
   try {
-    const {rows} = await pool.query(
-      `SELECT gs.id, gs.group_name FROM group_spaces gs
-       JOIN group_memberships gm ON gm.group_id=gs.id
-       JOIN identity_accounts ia ON ia.id=gm.account_id
-       WHERE lower(ia.email)=lower($1)
-         AND gm.role='admin' AND gm.status='active'
-         AND gs.state IN ('provisional','active')
-       ORDER BY gs.id`, [req.member.email]
-    );
-    res.set('Cache-Control', 'no-store');
-    res.json({groups: rows});
-  } catch (err) {next(err);}
-});
-
-// Restricted Resend smoke test. Sends only to the logged-in administrator's own address.
-// No invitation token is emailed: the recipient acceptance flow is not yet implemented.
-app.post('/api/admin/test-email', authenticate, requireAdmin, writeLimiter, async (req, res, next) => {
-  res.set('Cache-Control', 'no-store');
-  const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) return res.status(503).json({error:'RESEND_API_KEY saknas i Render.'});
-  try {
-    // Only the logged-in administrator or the explicitly approved test recipient.
-    const requestedRecipient = typeof req.body?.to === 'string' ? req.body.to.trim().toLowerCase() : '';
-    const permittedRecipients = [req.member.email.toLowerCase(), 'olof.hesselmark@gmail.com'];
-    if (requestedRecipient && !permittedRecipients.includes(requestedRecipient)) {
-      return res.status(400).json({error:'Mottagaren är inte godkänd för testutskick.'});
-    }
-    const recipient = requestedRecipient || req.member.email;
+    const association=await pool.query('SELECT association_name FROM association_settings WHERE association_id=$1',[associationId]);
+    const associationName=association.rows[0].association_name;
+    const safeAssociationName=associationName.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const apiKey = process.env.RESEND_API_KEY;
+    if (!apiKey) throw new Error('RESEND_API_KEY missing');
     const response = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        'Idempotency-Key': `lillachatten-test-${randomBytes(16).toString('hex')}`
-      },
-      body: JSON.stringify({
-        from: 'Lilla Chatten <inbjudan@lillachatten.se>',
-        to: [recipient],
-        subject: 'Test av e-post från Lilla Chatten',
-        text: 'Det här är ett testmeddelande från Lilla Chatten. Resend-anslutningen fungerar om du får mejlet.'
-      }),
-      signal: AbortSignal.timeout(15000)
+      method:'POST',
+      headers:{Authorization:`Bearer ${apiKey}`,'Content-Type':'application/json',
+        'Idempotency-Key':`lillachatten-invite-${invitationId}`},
+      body:JSON.stringify({
+        from:'Lilla Chatten <inbjudan@lillachatten.se>',
+        to:[email], subject:`Inbjudan till ${associationName}`, 
+        text:`Du är inbjuden till ${associationName}.\n\nÖppna din personliga inbjudan:\n${url}\n\nLänken gäller i 48 timmar.`,
+        html:`<p>Du är inbjuden till ${safeAssociationName}.</p><p><a href="${url}" style="display:inline-block;background:#24697b;color:white;padding:12px 20px;border-radius:8px;text-decoration:none">Visa inbjudan</a></p><p>Inbjudan gäller i 48 timmar.</p>`
+      }), signal:AbortSignal.timeout(15000)
     });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      console.error('Resend test-email failed:', response.status, result?.name || 'unknown');
-      return res.status(502).json({error:'Resend kunde inte ta emot testmejlet.', resendStatus:response.status,
-        detail:typeof result?.message === 'string' ? result.message.slice(0,300) : undefined});
-    }
-    res.json({ok:true, message:'Resend tog emot testmejlet.', to:recipient, id:result.id});
-  } catch (err) { next(err); }
-});
-
-// First invitation stage: only a logged-in group administrator can create an invitation.
-// The invitation is NOT a membership and does NOT grant access to any group content.
-// Email invitations are sent with Resend; acceptance requires the recipient to create an account.
-app.post('/api/groups/:groupId/invitations', authenticate, requireAdmin, writeLimiter, async (req, res, next) => {
-  const groupId = req.params.groupId;
-  const invitedEmail = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
-  if (!/^\d+$/.test(groupId) || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(invitedEmail) || invitedEmail.length > 180) {
-    return res.status(400).json({error:'Ange giltig grupp och e-postadress.'});
-  }
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    // Serialize invitations for one group to enforce the free group's member ceiling.
-    const {rows: groups} = await client.query(
-      'SELECT id, plan, group_name FROM group_spaces WHERE id=$1 FOR UPDATE', [groupId]);
-    if (groups.length !== 1) {
-      await client.query('ROLLBACK');
-      return res.status(404).json({error:'Gruppen finns inte.'});
-    }
-    // Match the current, authenticated legacy admin to its new identity,
-    // and verify admin membership in this particular group.
-    const {rows: admins} = await client.query(
-      `SELECT ia.id FROM identity_accounts ia
-       JOIN group_memberships gm ON gm.account_id=ia.id
-       WHERE lower(ia.email)=lower($1) AND gm.group_id=$2
-         AND gm.role='admin' AND gm.status='active'`,
-      [req.member.email, groupId]
-    );
-    if (admins.length !== 1) {
-      await client.query('ROLLBACK');
-      return res.status(403).json({error:'Du administrerar inte den här gruppen.'});
-    }
-    const {rows: active} = await client.query(
-      `SELECT count(*)::int AS total FROM group_memberships
-       WHERE group_id=$1 AND status='active'`, [groupId]
-    );
-    const {rows: existingMember} = await client.query(
-      `SELECT 1 FROM identity_accounts ia JOIN group_memberships gm ON gm.account_id=ia.id
-       WHERE gm.group_id=$1 AND gm.status='active' AND lower(ia.email)=$2 LIMIT 1`,
-      [groupId, invitedEmail]
-    );
-    if (existingMember.length) {
-      await client.query('ROLLBACK');
-      return res.status(409).json({error:'Personen är redan medlem.'});
-    }
-    // A group administrator may replace an unaccepted invitation for the same address.
-    // This permits recovery if the email was lost or the previous link was exposed.
-    // Only invitations for this group and this email are revoked; members are untouched.
-    await client.query(
-      `UPDATE group_invitations SET revoked_at=now()
-       WHERE group_id=$1 AND lower(invited_email)=$2
-         AND accepted_at IS NULL AND revoked_at IS NULL`,
-      [groupId, invitedEmail]
-    );
-    const {rows: pending} = await client.query(
-      `SELECT count(*)::int AS total FROM group_invitations
-       WHERE group_id=$1 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at>now()`,
-      [groupId]
-    );
-    if (groups[0].plan === 'free' && active[0].total + pending[0].total >= 25) {
-      await client.query('ROLLBACK');
-      return res.status(409).json({error:'Gratisgruppen har redan 25 medlemmar eller öppna inbjudningar.'});
-    }
-    const token = randomBytes(32).toString('hex');
-    const {rows: invitations} = await client.query(
-      `INSERT INTO group_invitations
-       (group_id, invited_email, invited_by, token_hash, expires_at)
-       VALUES ($1,$2,$3,$4,now() + interval '48 hours')
-       RETURNING id, expires_at`,
-      [groupId, invitedEmail, admins[0].id, hashToken(token)]
-    );
-    await client.query('COMMIT');
-    // Do not disclose the bearer token in the API response or server logs.
-    // Put it in a URL fragment so the browser does not transmit it in HTTP requests.
-    const invitationUrl = `https://www.lillachatten.se/accept-invitation.html#token=${token}`;
-    try {
-      const apiKey = process.env.RESEND_API_KEY;
-      if (!apiKey) throw new Error('RESEND_API_KEY missing');
-      const response = await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-          'Idempotency-Key': `lillachatten-invite-${invitations[0].id}`
-        },
-        body: JSON.stringify({
-          from: 'Lilla Chatten <inbjudan@lillachatten.se>',
-          to: [invitedEmail],
-          subject: 'Du är inbjuden till Lilla Chatten',
-          text: `Du är inbjuden till ${groups[0].group_name || 'Lilla Chatten'}.\n\nÖppna länken för att skapa ditt konto:\n${invitationUrl}\n\nInbjudan gäller i 48 timmar. Om du inte känner igen inbjudan kan du ignorera brevet.`,
-        }),
-        signal: AbortSignal.timeout(15000)
-      });
-      if (!response.ok) throw new Error(`Resend status ${response.status}`);
-    } catch (mailError) {
-      // A failed send must not block a fresh invitation attempt.
-      await pool.query('UPDATE group_invitations SET revoked_at=now() WHERE id=$1 AND accepted_at IS NULL', [invitations[0].id]);
-      console.error('Invitation email failure:', mailError.message);
-      return res.status(502).json({error:'Inbjudan kunde inte skickas. Försök igen.'});
-    }
-    res.status(201).json({
-      ok: true,
-      invitationId: invitations[0].id,
-      expiresAt: invitations[0].expires_at,
-      message: 'Inbjudan skickad via e-post.'
-    });
-  } catch (err) {
-    try { await client.query('ROLLBACK'); } catch (_) { /* Preserve original error. */ }
-    next(err);
-  } finally {
-    client.release();
-  }
-});
-
-// Invitation preview only: never grants membership or discloses group posts.
-// Link secret is transmitted in POST body, not in URLs or request logs.
-app.post('/api/invitations/preview', registrationLimiter, async (req, res, next) => {
-  res.set('Cache-Control', 'no-store');
-  const token = typeof req.body?.token === 'string' ? req.body.token : '';
-  if (!/^[0-9a-f]{64}$/.test(token)) {
-    return res.status(400).json({error:'Ogiltig inbjudningslänk.'});
-  }
-  try {
-    const {rows} = await pool.query(
-      `SELECT gs.group_name, gi.invited_email, gi.expires_at
-       FROM group_invitations gi
-       JOIN group_spaces gs ON gs.id=gi.group_id
-       WHERE gi.token_hash=$1 AND gi.accepted_at IS NULL
-         AND gi.revoked_at IS NULL AND gi.expires_at > now()
-         AND gs.state IN ('provisional','active')`,
-      [hashToken(token)]
-    );
-    if (rows.length !== 1) {
-      return res.status(404).json({error:'Inbjudan är ogiltig eller har gått ut.'});
-    }
-    res.json({groupName:rows[0].group_name, email:rows[0].invited_email,
-      expiresAt:rows[0].expires_at, canAccept:false});
-  } catch (err) {next(err);}
-});
-
-// Accept a single-use invitation. New accounts become active only after presenting
-// the secret invitation token. This never changes any existing account.
-app.post('/api/invitations/accept', registrationLimiter, async (req, res, next) => {
-  res.set('Cache-Control', 'no-store');
-  const token = typeof req.body?.token === 'string' ? req.body.token : '';
-  const name = safeText(req.body?.name, 100);
-  const house = safeText(req.body?.house, 100);
-  const password = typeof req.body?.password === 'string' ? req.body.password : '';
-  if (!/^[0-9a-f]{64}$/.test(token) || !name || !house || password.length < 12 || password.length > 200) {
-    return res.status(400).json({error:'Ange namn, bostad och lösenord med minst 12 tecken.'});
-  }
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
-    const {rows} = await client.query(
-      `SELECT gi.id,gi.group_id,gi.invited_email, gs.plan
-       FROM group_invitations gi JOIN group_spaces gs ON gs.id=gi.group_id
-       WHERE gi.token_hash=$1 AND gi.accepted_at IS NULL
-         AND gi.revoked_at IS NULL AND gi.expires_at>now()
-         AND gs.state IN ('provisional','active') FOR UPDATE OF gi`, [hashToken(token)]);
-    if (rows.length !== 1) {
-      await client.query('ROLLBACK');
-      return res.status(404).json({error:'Inbjudan är ogiltig, använd eller har gått ut.'});
-    }
-    const invite=rows[0], email=invite.invited_email.trim().toLowerCase();
-    // Prevent an invite from modifying an existing user's password or permissions.
-    const {rows: existing} = await client.query(
-      'SELECT 1 FROM members WHERE lower(email)=$1 UNION ALL SELECT 1 FROM identity_accounts WHERE lower(email)=$1 LIMIT 1',
-      [email]);
-    if (existing.length) {
-      await client.query('ROLLBACK');
-      return res.status(409).json({error:'Ett konto finns redan för adressen. Kontakta administratören.'});
-    }
-    await client.query('SELECT id FROM group_spaces WHERE id=$1 FOR UPDATE', [invite.group_id]);
-    const {rows: active} = await client.query(
-      `SELECT count(*)::int AS total FROM group_memberships WHERE group_id=$1 AND status='active'`,
-      [invite.group_id]);
-    if (invite.plan === 'free' && active[0].total >= 25) {
-      await client.query('ROLLBACK');
-      return res.status(409).json({error:'Gruppen är full. Kontakta administratören.'});
-    }
-    const passwordHash = await bcrypt.hash(password, 12);
-    const username='medlem_'+randomBytes(12).toString('hex');
-    const {rows:members} = await client.query(
-      `INSERT INTO members(name,house,username,email,password_hash,status,role)
-       VALUES($1,$2,$3,$4,$5,'active','member') RETURNING id`,
-      [name,house,username,email,passwordHash]);
-    const {rows:accounts}=await client.query(
-      'INSERT INTO identity_accounts(email,display_name) VALUES($1,$2) RETURNING id',[email,name]);
-    await client.query(
-      `INSERT INTO group_memberships(group_id,account_id,role,status)
-       VALUES($1,$2,'member','active')`,[invite.group_id,accounts[0].id]);
-    await client.query('UPDATE group_invitations SET accepted_at=now() WHERE id=$1',[invite.id]);
-    await client.query('COMMIT');
-    res.status(201).json({ok:true,message:'Kontot är skapat. Du kan nu logga in.'});
+    if (!response.ok) throw new Error(`Resend status ${response.status}`);
+    res.status(201).json({ok:true,message:'Inbjudan är skickad.'});
   } catch(err) {
-    try {await client.query('ROLLBACK');} catch(_){}
-    if (err.code==='23505') return res.status(409).json({error:'E-postadressen är redan registrerad.'});
-    next(err);
-  } finally {client.release();}
+    await pool.query('UPDATE member_invitations SET revoked_at=now() WHERE id=$1',[invitationId]);
+    console.error('Invitation email failure:',err.message);
+    res.status(502).json({error:'Inbjudan kunde inte skickas. Kontrollera Resend och försök igen.'});
+  }
+});
+
+app.post('/api/invitations/preview',registrationLimiter,async(req,res,next)=>{
+  res.set('Cache-Control','no-store');
+  const token = typeof req.body?.token === 'string' ? req.body.token : '';
+  if (!/^[0-9a-f]{64}$/.test(token)) return res.status(400).json({error:'Ogiltig inbjudningslänk.'});
+  try {
+    const result=await pool.query(`SELECT invited_email,expires_at FROM member_invitations
+      WHERE token_hash=$1 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at>now()`,[hashToken(token)]);
+    if (!result.rowCount) return res.status(404).json({error:'Inbjudan är redan använd, återkallad eller har gått ut.'});
+    res.json({email:result.rows[0].invited_email,expiresAt:result.rows[0].expires_at,canAccept:true});
+  } catch(err){next(err);}
+});
+
+app.post('/api/invitations/decline',registrationLimiter,async(req,res,next)=>{
+  res.set('Cache-Control','no-store');
+  const token=typeof req.body?.token==='string'?req.body.token:'';
+  if (!/^[0-9a-f]{64}$/.test(token)) return res.status(400).json({error:'Ogiltig inbjudningslänk.'});
+  try {
+    const result=await pool.query(`UPDATE member_invitations SET revoked_at=now()
+      WHERE token_hash=$1 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at>now() RETURNING id`,[hashToken(token)]);
+    if (!result.rowCount) return res.status(404).json({error:'Inbjudan gäller inte längre.'});
+    res.json({ok:true});
+  }catch(err){next(err);}
+});
+
+app.post('/api/invitations/accept',registrationLimiter,async(req,res,next)=>{
+  res.set('Cache-Control','no-store');
+  const token=typeof req.body?.token==='string'?req.body.token:'';
+  const name=safeText(req.body?.name,100),house=safeText(req.body?.house,100);
+  const password=typeof req.body?.password==='string'?req.body.password:'';
+  if (!/^[0-9a-f]{64}$/.test(token)||!name||!house||password.length<12||password.length>200)
+    return res.status(400).json({error:'Namn, bostad och lösenord med minst 12 tecken är obligatoriska. Utan lösenord går det inte att logga in.'});
+  const client=await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const invitation=await client.query(`SELECT id,invited_email FROM member_invitations
+      WHERE token_hash=$1 AND accepted_at IS NULL AND revoked_at IS NULL AND expires_at>now()
+      FOR UPDATE`,[hashToken(token)]);
+    if (!invitation.rowCount){await client.query('ROLLBACK');return res.status(404).json({error:'Inbjudan gäller inte längre.'});}
+    const email=invitation.rows[0].invited_email.trim().toLowerCase();
+    if (email===administratorEmail){await client.query('ROLLBACK');return res.status(403).json({error:'Den här adressen är reserverad.'});}
+    if ((await client.query('SELECT 1 FROM members WHERE lower(email)=$1',[email])).rowCount){
+      await client.query('ROLLBACK');return res.status(409).json({error:'Adressen har redan ett konto. Logga in i stället.'});
+    }
+    const passwordHash=await bcrypt.hash(password,12);
+    await client.query(`INSERT INTO members(name,house,username,email,password_hash,status,role)
+      VALUES($1,$2,$3,$4,$5,'active','member')`,
+      [name,house,'medlem_'+randomBytes(12).toString('hex'),email,passwordHash]);
+    await client.query('UPDATE member_invitations SET accepted_at=now() WHERE id=$1',[invitation.rows[0].id]);
+    await client.query('COMMIT');
+    res.status(201).json({ok:true,email,message:'Registreringen är klar. Välkommen till Lillachatten!'});
+  }catch(err){await client.query('ROLLBACK').catch(()=>{});if(err.code==='23505')return res.status(409).json({error:'E-postadressen är redan registrerad.'});next(err);}
+  finally{client.release();}
 });
 
 // Frontend and API share one origin, so the secure session cookie works in browsers.
@@ -1032,63 +750,7 @@ app.use((err,req,res,next)=>{
 
 try {
   await initialize();
-  // Schema check (temporary): print only table names and row counts. No personal data.
-  for (const table of ['identity_accounts', 'group_spaces', 'group_memberships', 'group_invitations']) {
-    const { rows } = await pool.query(`SELECT count(*)::int AS total FROM ${table}`);
-    console.log(`Schema check: ${table} exists; rows=${rows[0].total}`);
-  }
-
-  await bootstrapFirstAdmin();
-  // TEMPORARY DIAGNOSTIC: report counts only; no personal data or secrets in logs.
-  const diagnosticAdminEmail = (process.env.FIRST_ADMIN_EMAIL || '').trim().toLowerCase();
-  const { rows: diagnosticAdminRows } = await pool.query(`
-    SELECT
-      count(*) FILTER (WHERE role = 'admin')::int AS all_admins,
-      count(*) FILTER (WHERE role = 'admin' AND status = 'active')::int AS active_admins,
-      count(*) FILTER (WHERE lower(email) = $1)::int AS email_matches,
-      count(*) FILTER (WHERE lower(email) = $1 AND status = 'active')::int AS email_active,
-      count(*) FILTER (WHERE lower(email) = $1 AND role = 'admin')::int AS email_admin
-    FROM members`, [diagnosticAdminEmail]);
-  const d = diagnosticAdminRows[0];
-  console.log(`Test-admin diagnosis: all_admins=${d.all_admins}, active_admins=${d.active_admins}, email_matches=${d.email_matches}, email_active=${d.email_active}, email_admin=${d.email_admin}`);
-  await createFirstTestGroupOnce();
-
-  // Tillfällig engångsåterställning. Aktiveras enbart med explicit Render-variabel.
-  if (process.env.RESET_FIRST_ADMIN_PASSWORD === 'true') {
-    const email = (process.env.FIRST_ADMIN_EMAIL || '').trim().toLowerCase();
-    const password = process.env.FIRST_ADMIN_PASSWORD || '';
-    if (!email || password.length < 12 || password.length > 200) {
-      throw new Error('Admin reset requires FIRST_ADMIN_EMAIL and FIRST_ADMIN_PASSWORD (minst 12 tecken).');
-    }
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-      const { rows } = await client.query(
-        "SELECT id FROM members WHERE email=$1 AND role='admin' AND status='active' FOR UPDATE",
-        [email]
-      );
-      if (rows.length !== 1) throw new Error('Admin reset aborted: aktiv administrator med angiven e-post saknas.');
-      const hash = await bcrypt.hash(password, 12);
-      await client.query('UPDATE members SET password_hash=$1 WHERE id=$2', [hash, rows[0].id]);
-      await client.query('DELETE FROM sessions WHERE member_id=$1', [rows[0].id]);
-      await client.query('COMMIT');
-      console.log('Existing test administrator password reset; old sessions cleared.');
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
-  }
-
-  await seedOnlyForDemo();
-  await resetKallePasswordOnce();
-  // Explicit administrator assignment: set ADMIN_EMAIL to an existing account in Render.
-  const adminEmail = (process.env.ADMIN_EMAIL || '').trim().toLowerCase();
-  if (adminEmail) {
-    const result = await pool.query(`UPDATE members SET role='admin' WHERE email=$1 AND status='active' RETURNING id`,[adminEmail]);
-    if (!result.rowCount) console.warn('ADMIN_EMAIL does not match an active member.');
-  }
+  await ensureSingleAdministrator();
   const port=Number(process.env.PORT || 10000);
   app.listen(port,'0.0.0.0',()=>console.log(`Stockevik backend listening on ${port}`));
 } catch(err){console.error('Startup failed:',err);process.exit(1);}

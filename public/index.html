@@ -135,19 +135,14 @@ main,.sidebar,.card{min-width:0}
 <meta name="apple-mobile-web-app-title" content="Stockevik">
 </head>
 <body>
-<header><div class="top"><div class="brand" aria-hidden="true">⚓</div><div><div class="name" id="associationTitle">Det händer i Stockevik</div><div class="tag" id="associationTagline">Vår egen mötesplats · utan annonser</div></div><div class="pill">Vår mötesplats</div><div id="account" class="account hide"><span id="accountName" class="accountname"></span><button id="logoutBtn" class="btn subtle" type="button">Logga ut</button></div></div></header>
-<section id="loginView" class="loginwall"><div class="card"><div class="eyebrow">Inloggning · utvecklingsgren</div><h2 style="font:28px Georgia,serif;margin:7px 0 12px">Välkommen tillbaka!</h2><p>Logga in med din e-postadress och ditt lösenord.</p><form id="loginForm"><label for="loginEmail">E-postadress</label><input id="loginEmail" type="email" autocomplete="username" required placeholder="din@epost.se"><div class="field"><label for="loginPassword">Lösenord</label><input id="loginPassword" type="password" autocomplete="current-password" required></div><button class="btn" type="submit">Logga in</button><p class="small" id="loginError" role="alert"></p></form><button id="registerToggle" class="linkbtn" type="button">Ansök om medlemskap</button><div class="note">Inlägg och kommentarer delas mellan godkända medlemmar. Kontakta administratören om din ansökan väntar på godkännande.</div></div></section>
-<section id="registrationView" class="loginwall hide"><div class="card"><h2>Ansök om medlemskap</h2><p class="small">Endast boende som godkänns av administratören får tillgång till anslagstavlan. Ingen automatisk e-postbekräftelse skickas i denna testversion.</p><form id="registrationForm">
-<div class="field"><label for="regName">Namn</label><input id="regName" required maxlength="100" autocomplete="name"></div>
-<div class="field"><label for="regHouse">Fastighet / hus</label><input id="regHouse" required maxlength="100"></div>
-<div class="field"><label for="regEmail">E-postadress</label><input id="regEmail" type="email" required maxlength="180" autocomplete="email"></div>
-<div class="field"><label for="regPassword">Välj lösenord (minst 8 tecken)</label><input id="regPassword" type="password" required minlength="8" maxlength="200" autocomplete="new-password"></div>
-<button class="btn" type="submit">Skicka ansökan</button><p id="registrationStatus" role="status" class="small"></p></form>
-<button id="registrationBack" class="linkbtn" type="button">Tillbaka till inloggning</button></div></section>
+<header><div class="top"><div class="brand" aria-hidden="true">⚓</div><div><div class="name" id="associationTitle">Lillachatten</div><div class="tag" id="associationTagline">En privat mötesplats</div></div><div class="pill">Vår mötesplats</div><div id="account" class="account hide"><span id="accountName" class="accountname"></span><button id="logoutBtn" class="btn subtle" type="button">Logga ut</button></div></div></header>
+<section id="loginView" class="loginwall"><div class="card"><div class="eyebrow">Inloggning · version 15</div><h2 style="font:28px Georgia,serif;margin:7px 0 12px">Välkommen tillbaka!</h2><p>Logga in med din e-postadress och ditt lösenord.</p><form id="loginForm"><label for="loginEmail">E-postadress</label><input id="loginEmail" type="email" autocomplete="username" required placeholder="din@epost.se"><div class="field"><label for="loginPassword">Lösenord</label><input id="loginPassword" type="password" autocomplete="current-password" required></div><button class="btn" type="submit">Logga in</button><p class="small" id="loginError" role="alert"></p></form><div class="note">Nya medlemmar får en personlig inbjudan från administratören.</div></div></section>
 <div class="wrap hide" id="appWrap">
  <main>
   <section class="card"><div class="eyebrow">Vår gemensamma anslagstavla</div><div class="welcome" id="associationWelcome">Välkommen till vår mötesplats!</div><div class="small" id="associationWelcomeText">Nyheter, bilder och samtal mellan grannar – utan annonser.</div></section>
-  <nav class="tabbar" aria-label="Sidor"><button id="feedTab" class="active">Anslagstavlan</button><button id="membersTab">Medlemmar</button><button id="profileTab">Min profil</button><button id="adminTab" class="hide">Ansökningar</button><button id="settingsTab" class="hide">Föreningsinställningar</button></nav>
+  <nav class="tabbar" id="tabBar" aria-label="Sidor"><button id="feedTab" class="active">Anslagstavlan</button><button id="membersTab">Medlemmar</button><button id="profileTab">Min profil</button><button id="adminTab" class="hide">Inbjudningar</button><button id="settingsTab" class="hide">Föreningsinställningar</button></nav>
+  <div id="setupTabHint" class="hide small">Ge först din nya förening ett namn.</div>
+  <div id="setupView" class="hide"><section class="card"><h2 id="setupHeading">Välkommen till Lillachatten</h2><p>Det finns ännu inga medlemmar. Börja med att ge föreningen ett namn. Därefter kan du skicka den första inbjudan.</p><form id="setupForm"><div class="field"><label for="setupName">Föreningens namn</label><input id="setupName" maxlength="180" required autocomplete="organization" placeholder="Ange föreningens namn"></div><button class="btn" type="submit">Spara namn och fortsätt</button><p id="setupStatus" role="status" class="small"></p></form></section></div>
   <div id="feedView">
    <section class="card"><h2>Skriv ett inlägg</h2><textarea id="postText" maxlength="5000" placeholder="Vad vill du dela med grannarna?"></textarea>
     <div id="postPhotoPreview" class="post-photo-preview hide" aria-live="polite"></div>
@@ -174,16 +169,15 @@ main,.sidebar,.card{min-width:0}
    </form></section>
   </div>
   <div id="adminView" class="hide">
-    <section class="card">
-      <h2>Medlemsinbjudningar</h2>
-      <p class="small">Skicka en personlig inbjudan via e-post. Mottagaren kan öppna länken och skapa sitt konto.</p>
-      <p><a href="/invite-admin.html">Skicka medlemsinbjudan</a></p>
-    </section>
-    <section class="card"><h2>Medlemsansökningar</h2><p class="small">Godkänn bara personer som du känner tillhör Stockevik. E-postadresserna visas enbart för administratören.</p><div id="applicationsList"></div><p id="adminStatus" role="status" class="small"></p></section></div>
-  <div id="settingsView" class="hide"><section class="card">
+     <section class="card"><h2>Bjud in medlem</h2>
+       <p class="small">Den inbjudna väljer själv om hen vill gå med, fyller i sina uppgifter och väljer lösenord. Inget ytterligare godkännande behövs.</p>
+       <form id="inviteForm"><div class="field"><label for="inviteEmail">E-postadress till den du vill bjuda in</label><input id="inviteEmail" type="email" maxlength="180" required autocomplete="off"></div>
+       <button class="btn" type="submit">Skicka inbjudan</button><p class="small" id="inviteStatus" role="status"></p></form>
+     </section></div>
+<div id="settingsView" class="hide"><section class="card">
    <h2>Föreningsinställningar</h2>
    <p class="small">Ändras enbart av föreningens administratör. Förenings-ID är fast och identifierar denna installation.</p>
-   <p class="small"><strong>Förenings-ID:</strong> <span id="associationId">stockevik</span></p>
+   <p class="small"><strong>Förenings-ID:</strong> <span id="associationId">local</span></p>
    <form id="associationForm">
     <div class="field"><label for="associationName">Föreningens namn</label><input id="associationName" required maxlength="180"></div>
     <div class="field"><label for="associationAppTitle">Appens rubrik</label><input id="associationAppTitle" required maxlength="180"></div>
@@ -199,10 +193,10 @@ main,.sidebar,.card{min-width:0}
     <section id="memberAdmin" class="card hide"><h2>Administrera medlemmar</h2><p class="small">Endast administratören kan redigera medlemmar. Inaktivering stänger av inloggningen men behåller inlägg och kommentarer.</p><div id="adminMembersList"></div><p id="adminMembersStatus" class="small" role="status"></p></section>
   </div>
  </main>
- <aside class="sidebar"><section class="card"><h3>Om vår mötesplats</h3><p class="info" id="associationAbout">Ett privat samtalsforum för oss i Stockevik.</p><p class="info">Här kan vi dela nyheter, tips, frågor och små händelser från vår by.</p></section><section class="card"><h3>Bilder från Stockevik</h3><div class="boxpic">📷<br>Här kommer våra bilder</div><p class="notice">Bildgalleri tillkommer i nästa version.</p></section><section class="card"><h3>Enkelhet och integritet</h3><p class="info">Ingen reklam och ingen profilering. Medlemsuppgifter ska förvaltas av föreningen.</p></section></aside>
+ <aside class="sidebar"><section class="card"><h3>Om vår mötesplats</h3><p class="info" id="associationAbout">En privat mötesplats för föreningens medlemmar.</p><p class="info">Här kan vi dela nyheter, tips, frågor och små händelser.</p></section><section class="card"><h3>Bilder från föreningen</h3><div class="boxpic">📷<br>Här kommer våra bilder</div><p class="notice">Bildgalleri tillkommer i nästa version.</p></section><section class="card"><h3>Enkelhet och integritet</h3><p class="info">Ingen reklam och ingen profilering. Medlemsuppgifter ska förvaltas av föreningen.</p></section></aside>
 </div>
-<footer>Det händer i Stockevik · Föreningsapp · utvecklingsversion</footer>
-<script src="/app.js?v=133" defer></script>
+<footer>Lillachatten · Version 16</footer>
+<script src="/app.js?v=160" defer></script>
 <script src="/pwa.js?v=123" defer></script>
 </body>
 </html>

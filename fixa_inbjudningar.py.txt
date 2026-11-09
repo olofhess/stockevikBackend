@@ -1,0 +1,44 @@
+from pathlib import Path
+
+root = Path(__file__).resolve().parent
+# Run from project root, not from downloads, after moving this script there.
+app = Path('public/app.js')
+index = Path('public/index.html')
+if not app.exists() or not index.exists():
+    raise SystemExit('Kör skriptet i projektmappen där public/app.js och public/index.html finns.')
+
+s=app.read_text(encoding='utf-8')
+old="if (tab === 'admin') { loadApplications(); loadTestInvitationGroups(); }"
+if old in s:
+    s=s.replace(old,"if (tab === 'admin') loadApplications();")
+start=s.find('// Temporary invitation test UI.')
+end=s.find('async function loadApplications()', start)
+if start>=0 and end>start:
+    s=s[:start]+s[end:]
+app.write_text(s,encoding='utf-8')
+
+s=index.read_text(encoding='utf-8')
+start=s.find('    <section class="card" id="testInvitationSection" hidden>')
+end=s.find('    <section class="card"><h2>Medlemsansökningar',start)
+replacement='''    <section class="card">
+      <h2>Medlemsinbjudningar</h2>
+      <p class="small">Skicka en personlig inbjudan via e-post. Mottagaren kan öppna länken och skapa sitt konto.</p>
+      <p><a href="/invite-admin.html">Skicka medlemsinbjudan</a></p>
+    </section>
+'''
+if start>=0 and end>start:
+    s=s[:start]+replacement+s[end:]
+index.write_text(s,encoding='utf-8')
+
+# Keep the former test URL from showing a confusing invalid-link failure.
+legacy=Path('public/inbjudan.html')
+legacy.write_text('''<!doctype html>
+<html lang="sv"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer"><title>Lilla Chatten – inbjudan</title>
+<script>
+const hash=location.hash;
+if(/^#token=[a-f0-9]{64}$/.test(hash)) location.replace('/accept-invitation.html'+hash);
+</script>
+</head><body><main><h1>Inbjudan</h1><p>Den tidigare testlänken kan inte användas. Be administratören skicka en ny inbjudan via e-post.</p><a href="/">Tillbaka</a></main></body></html>''',encoding='utf-8')
+
+print('Klart: gammal testinbjudan ersatt med korrekt e-postinbjudan.')
