@@ -46,7 +46,7 @@ app.use((req, res, next) => {
   if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && origin) {
     const myOrigin = `${req.protocol}://${req.get('host')}`;
     if (origin !== myOrigin && (!allowedOrigin || origin !== allowedOrigin)) {
-      return res.status(403).json({ error: 'OtillÃ¥tet ursprung.' });
+      return res.status(403).json({ error: 'Otillåtet ursprung.' });
     }
   }
   next();
@@ -193,13 +193,60 @@ async function ensureSingleAdministrator() {
   finally { client.release(); }
 }
 
+// One-time recovery for the accidental Stockevik test profile left in a fresh
+// Lillachatten database. Do not touch established installations or their data.
+// The legacy name is used ONLY as a precise migration match, never as a default.
+async function recoverUnusedTestInstallation() {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(745170)');
+    const {rows} = await client.query(`SELECT association_id FROM association_settings
+      WHERE association_id='local'
+        AND association_name='Stockeviks samhällsförening'
+        AND app_title='Det händer i Stockevik'
+        AND configured_at IS NOT NULL
+        AND (SELECT count(*) FROM members)=1
+        AND EXISTS (SELECT 1 FROM members WHERE lower(email)=$1 AND role='admin' AND status='active')
+        AND NOT EXISTS (SELECT 1 FROM posts)
+        AND NOT EXISTS (SELECT 1 FROM comments)
+        AND NOT EXISTS (SELECT 1 FROM member_invitations)
+      FOR UPDATE`, [administratorEmail]);
+    if (!rows.length) {
+      await client.query('COMMIT');
+      console.log('Lillachatten: no unused legacy profile to recover.');
+      return;
+    }
+    const password = process.env.FIRST_ADMIN_PASSWORD || '';
+    if (password.length < 12 || password.length > 200) {
+      throw new Error('FIRST_ADMIN_PASSWORD måste vara 12–200 tecken för engångsåterställning.');
+    }
+    const passwordHash = await bcrypt.hash(password, 12);
+    await client.query(`UPDATE association_settings SET
+      association_name='', app_title='Lillachatten', tagline='En privat mötesplats',
+      welcome_title='', welcome_text='', about_text='',
+      configured_at=NULL, updated_at=now() WHERE association_id='local'`);
+    await client.query('UPDATE members SET password_hash=$1 WHERE lower(email)=$2',
+      [passwordHash, administratorEmail]);
+    await client.query(`DELETE FROM sessions WHERE member_id IN
+      (SELECT id FROM members WHERE lower(email)=$1)`, [administratorEmail]);
+    await client.query('COMMIT');
+    console.log('Lillachatten: unused legacy profile reset; initial administrator password restored.');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 async function authenticate(req, res, next) {
   const token = req.cookies[cookieName];
-  if (!token || !/^[0-9a-f]{64}$/.test(token)) return res.status(401).json({error: 'Logga in fÃ¶rst.'});
+  if (!token || !/^[0-9a-f]{64}$/.test(token)) return res.status(401).json({error: 'Logga in först.'});
   try {
     const {rows} = await pool.query(`SELECT m.id, m.name, m.house, m.username, m.status, m.role, m.email, m.avatar_updated_at FROM sessions s
        JOIN members m ON m.id=s.member_id WHERE s.token_hash=$1 AND s.expires_at > now()`, [hashToken(token)]);
-    if (!rows.length || rows[0].status !== 'active') return res.status(401).json({error:'Sessionen har gÃ¥tt ut.'});
+    if (!rows.length || rows[0].status !== 'active') return res.status(401).json({error:'Sessionen har gått ut.'});
     req.member = rows[0];
     next();
   } catch (err) { next(err); }
@@ -214,10 +261,10 @@ app.post('/api/login', loginLimiter, async (req, res, next) => {
   try {
     const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
     const password = typeof req.body?.password === 'string' ? req.body.password : '';
-    if (!email || password.length > 2000) return res.status(400).json({error:'Ange e-post och lÃ¶senord.'});
+    if (!email || password.length > 2000) return res.status(400).json({error:'Ange e-post och lösenord.'});
     const {rows} = await pool.query('SELECT * FROM members WHERE email=$1 AND status=$2', [email, 'active']);
     if (!rows.length || !(await bcrypt.compare(password, rows[0].password_hash))) {
-      return res.status(401).json({error:'Fel e-post eller lÃ¶senord.'});
+      return res.status(401).json({error:'Fel e-post eller lösenord.'});
     }
     const token = randomBytes(32).toString('hex');
     await pool.query('INSERT INTO sessions(token_hash,member_id,expires_at) VALUES ($1,$2,now() + interval \'7 days\')',[hashToken(token), rows[0].id]);
@@ -439,9 +486,9 @@ app.delete('/api/posts/:id', authenticate, writeLimiter, async (req, res, next) 
 
 app.post('/api/posts/:id/comments', authenticate, writeLimiter, async (req, res, next) => {
   try {
-    if (!/^\d+$/.test(req.params.id)) return res.status(400).json({error:'Ogiltigt inlÃ¤ggs-ID.'});
+    if (!/^\d+$/.test(req.params.id)) return res.status(400).json({error:'Ogiltigt inläggs-ID.'});
     const body=safeText(req.body?.text,2000);
-    if (!body) return res.status(400).json({error:'Kommentaren mÃ¥ste innehÃ¥lla 1â€“2000 tecken.'});
+    if (!body) return res.status(400).json({error:'Kommentaren måste innehÃ¥lla 1–2000 tecken.'});
     const {rows}=await pool.query(`INSERT INTO comments(post_id,member_id,body)
       SELECT id,$2,$3 FROM posts WHERE id=$1 RETURNING id,created_at`,[req.params.id,req.member.id,body]);
     if (!rows.length) return res.status(404).json({error:'InlÃ¤gget saknas.'});
@@ -462,7 +509,7 @@ app.get('/api/members', authenticate, async (req, res, next) => {
 app.post('/api/register', (_req,res) => res.status(403).json({error:'Medlemskap kräver en personlig inbjudan.'}));
 
 function requireAdmin(req,res,next) {
-  if (req.member.role !== 'admin' || req.member.email.toLowerCase() !== administratorEmail) return res.status(403).json({error:'Endast administratÃ¶ren har tillgÃ¥ng.'});
+  if (req.member.role !== 'admin' || req.member.email.toLowerCase() !== administratorEmail) return res.status(403).json({error:'Endast administratören har tillgÃ¥ng.'});
   next();
 }
 // Association profile. No access to member data, and only administrators may edit text.
@@ -716,7 +763,7 @@ app.post('/api/invitations/accept',registrationLimiter,async(req,res,next)=>{
 
 // Frontend and API share one origin, so the secure session cookie works in browsers.
 app.use(express.static('public'));
-app.use((req,res)=>res.status(404).json({error:'OkÃ¤nd adress.'}));
+app.use((req,res)=>res.status(404).json({error:'Okänd adress.'}));
 app.use((err,req,res,next)=>{
   console.error('API error:', err);
   res.status(500).json({error:'Ett serverfel uppstod.'});
@@ -725,6 +772,7 @@ app.use((err,req,res,next)=>{
 try {
   await initialize();
   await ensureSingleAdministrator();
+  await recoverUnusedTestInstallation();
   const port=Number(process.env.PORT || 10000);
   app.listen(port,'0.0.0.0',()=>console.log(`Lillachatten listening on ${port}`));
 } catch(err){console.error('Startup failed:',err);process.exit(1);}
